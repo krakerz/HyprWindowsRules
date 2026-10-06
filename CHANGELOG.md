@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+## [0.3.0] — 2026-10-06
+
+### Added
+- Built-in updater: checks for a new release at start-up and installs it with one click.
+
+### Changed
+- The app is now called Hyprland Windows Rules.
+
 ## [0.2.0] — 2026-10-06
 
 ### Added
@@ -9,7 +17,6 @@
 - Theme picker in the toolbar: system, light or dark.
 - Release downloads: a tar.gz with an install script that puts the app in `~/.local/bin` and adds it to the app launcher, and a standalone AppImage.
 - App icon.
-- Built-in updater: checks for a new release at start-up and installs it with one click.
 
 ### Changed
 - Rewritten in Rust as a single standalone binary; Python, PySide6 and a system Lua are no longer needed.
@@ -17,7 +24,6 @@
 - The interface no longer uses the Qt theme; it follows the system light/dark mode by default.
 - The hook follows Caelestia's style (`require` with its `home` and `maybe_create` helpers) when installed into Caelestia's `hyprland.lua`.
 - The managed rules file is renamed to `~/.config/hypr-rules/hypr-rules.lua`; an existing `rules.lua` is moved over automatically.
-- The app is now called Hyprland Windows Rules.
 
 ### Fixed
 - Saved rules not always taking effect until Hyprland was reloaded by hand.
