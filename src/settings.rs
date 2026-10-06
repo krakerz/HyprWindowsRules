@@ -77,6 +77,7 @@ pub struct Settings {
     pub hook_file: String,
     pub reload_on_save: bool,
     pub theme: ThemePref,
+    pub check_updates: bool,
 }
 
 impl Default for Settings {
@@ -86,6 +87,7 @@ impl Default for Settings {
             hook_file: default_hook().to_string_lossy().into_owned(),
             reload_on_save: true,
             theme: ThemePref::System,
+            check_updates: true,
         }
     }
 }

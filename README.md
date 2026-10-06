@@ -1,4 +1,6 @@
-# hypr-rules
+# Hyprland Windows Rules
+
+![Hyprland Windows Rules screenshot](https://gist.githubusercontent.com/krakerz/97ccc96ce96ef1bb63d03ef9fc0186e9/raw/screenshot.png)
 
 A GUI application for managing Hyprland window rules without editing config files.
 
@@ -20,6 +22,7 @@ Hyprland 0.55+ moved to a Lua config; window rules are `hl.window_rule({ match =
 - Reload Hyprland on save and display config errors for debugging.
 - Set up or verify the one-click hook in your Hyprland config to load the rules file automatically.
 - Light, dark, or follow-the-system theme, switchable from the toolbar.
+- Updates itself from GitHub releases: a notice at start-up, then one click to download, install and restart.
 
 ## Installation
 
@@ -79,6 +82,8 @@ Because the file is loaded with `require`, Hyprland watches it and reloads by it
 **Rule priority:** Later rules win when two rules set the same property; use Move up/down to reorder them.
 
 **Editing by hand:** The managed file stays plain Lua and can be hand-edited as long as it remains a list of `hl.window_rule` calls; comments are not preserved when the app saves.
+
+**Updates:** The app checks for a new release at start-up and shows a notice in the status bar if one is available. Click to download and install automatically with a progress bar, then restart. Settings → Updates shows your current version and install method, with a "Check now" button and a "Check for updates at startup" toggle (on by default). Builds run from source (cargo run or the binary in target/) don't update themselves.
 
 ## FAQ
 

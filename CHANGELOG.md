@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+## [0.3.0] — 2026-10-06
+
+### Added
+- Built-in updater: checks for a new release at start-up and installs it with one click.
+
+### Changed
+- The app is now called Hyprland Windows Rules.
+
 ## [0.2.0] — 2026-10-06
 
 ### Added

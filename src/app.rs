@@ -1,18 +1,20 @@
 //! iced user interface.
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::Duration;
 
 use iced::keyboard::{self, Key, key::Named};
 use iced::widget::{
-    Column, button, center, checkbox, column, container, opaque, pick_list, row, scrollable, space,
-    stack, text, text_input, tooltip,
+    Column, button, center, checkbox, column, container, opaque, pick_list, progress_bar, row,
+    scrollable, space, stack, text, text_input, tooltip,
 };
 use iced::{Color, Element, Fill, Font, Subscription, Task, Theme, window};
 use serde_json::Value as Json;
 
 use crate::model::{self, Kind, MatchField, Mode, PATTERN_KEYS, Rule, Value, effect_kind};
 use crate::settings::{self, Settings, ThemePref};
+use crate::update::{self, InstallKind, Progress, Update};
 use crate::{hypr, luaio};
 
 /// Effects edited by dedicated widgets in the "Common" group; the rest go in the table.
@@ -28,7 +30,7 @@ const COMMON_KEYS: [&str; 9] = [
     "no_initial_focus",
 ];
 
-const APP_TITLE: &str = "Hyprland Window Rules";
+const APP_TITLE: &str = "Hyprland Windows Rules";
 
 // ---- value <-> text for the free-form property table ------------------------------------
 
@@ -281,6 +283,7 @@ enum Modal {
         rules: String,
         hook: String,
         reload: bool,
+        check_updates: bool,
     },
 }
 
@@ -301,6 +304,21 @@ pub struct App {
     search: String,
     note: String,
     modal: Option<Modal>,
+    install_kind: InstallKind,
+    update: UpdateState,
+}
+
+enum UpdateState {
+    Idle,
+    Checking,
+    UpToDate,
+    Available(Update),
+    Downloading {
+        version: String,
+        progress: Arc<Progress>,
+    },
+    Ready(String),
+    Failed(String),
 }
 
 #[derive(Debug, Clone)]
@@ -372,6 +390,19 @@ pub enum Message {
     CloseRequested,
     CloseSave,
     Exit,
+    // updates
+    CheckUpdates,
+    UpdateChecked {
+        manual: bool,
+        result: Result<Option<Update>, String>,
+    },
+    InstallUpdate,
+    UpdateTick,
+    UpdateApplied(Result<(), String>),
+    Restart,
+    RestartSave,
+    RestartNow,
+    SettingsCheckUpdates(bool),
 }
 
 pub fn run() -> iced::Result {
@@ -433,13 +464,20 @@ impl App {
             search: String::new(),
             note: String::new(),
             modal: None,
+            install_kind: update::install_kind(),
+            update: UpdateState::Idle,
         };
         app.refresh_windows();
         app.load_rules();
         if app.modal.is_none() && !app.settings.rules().exists() {
             app.offer_first_import();
         }
-        (app, Task::none())
+        let task = if app.install_kind != InstallKind::Source && app.settings.check_updates {
+            app.check_updates(false)
+        } else {
+            Task::none()
+        };
+        (app, task)
     }
 
     fn title(&self) -> String {
@@ -456,10 +494,39 @@ impl App {
     }
 
     fn subscription(&self) -> Subscription<Message> {
+        // Redraws the download progress while an update downloads
+        let tick = match self.update {
+            UpdateState::Downloading { .. } => {
+                iced::time::every(Duration::from_millis(150)).map(|_| Message::UpdateTick)
+            }
+            _ => Subscription::none(),
+        };
         Subscription::batch([
             keyboard::listen().filter_map(shortcut),
             window::close_requests().map(|_| Message::CloseRequested),
+            tick,
         ])
+    }
+
+    fn check_updates(&mut self, manual: bool) -> Task<Message> {
+        if manual {
+            self.update = UpdateState::Checking;
+        }
+        let kind = self.install_kind.clone();
+        Task::perform(update::check(kind), move |r| Message::UpdateChecked {
+            manual,
+            result: r.map_err(|e| format!("{e:#}")),
+        })
+    }
+
+    fn restart(&mut self) -> Task<Message> {
+        match update::relaunch(&self.install_kind) {
+            Ok(()) => iced::exit(),
+            Err(err) => {
+                self.info("Restart", format!("{err:#}"));
+                Task::none()
+            }
+        }
     }
 
     fn info(&mut self, title: &str, body: impl Into<String>) {
@@ -815,6 +882,7 @@ impl App {
                     rules: self.settings.rules_path.clone(),
                     hook: self.settings.hook_file.clone(),
                     reload: self.settings.reload_on_save,
+                    check_updates: self.settings.check_updates,
                 });
             }
             Message::Save => {
@@ -1002,6 +1070,81 @@ impl App {
                 }
             }
             Message::Exit => return iced::exit(),
+
+            Message::CheckUpdates => {
+                self.modal = None;
+                return self.check_updates(true);
+            }
+            Message::UpdateChecked { manual, result } => {
+                self.update = match result {
+                    Ok(Some(found)) => UpdateState::Available(found),
+                    // A quiet start-up check stays quiet unless there's something to offer
+                    _ if !manual => UpdateState::Idle,
+                    Ok(None) => UpdateState::UpToDate,
+                    Err(err) => UpdateState::Failed(format!("Couldn't check for updates: {err}")),
+                };
+            }
+            Message::InstallUpdate => {
+                if let UpdateState::Available(found) = &self.update {
+                    let found = found.clone();
+                    let progress = Arc::new(Progress::default());
+                    self.update = UpdateState::Downloading {
+                        version: found.version.clone(),
+                        progress: progress.clone(),
+                    };
+                    let kind = self.install_kind.clone();
+                    return Task::perform(
+                        async move {
+                            update::apply(kind, found, &progress)
+                                .await
+                                .map_err(|e| format!("{e:#}"))
+                        },
+                        Message::UpdateApplied,
+                    );
+                }
+            }
+            Message::UpdateTick => {}
+            Message::UpdateApplied(result) => {
+                self.update = match (result, &self.update) {
+                    (Ok(()), UpdateState::Downloading { version, .. }) => {
+                        UpdateState::Ready(version.clone())
+                    }
+                    (Ok(()), _) => UpdateState::Idle,
+                    (Err(err), _) => UpdateState::Failed(format!("Update failed: {err}")),
+                };
+            }
+            Message::Restart => {
+                if self.dirty {
+                    self.modal = Some(Modal::Message {
+                        title: "Unsaved changes".into(),
+                        body: "Save changes before restarting?".into(),
+                        buttons: vec![
+                            ("Save".into(), Message::RestartSave),
+                            ("Discard".into(), Message::RestartNow),
+                            ("Cancel".into(), Message::CloseModal),
+                        ],
+                    });
+                } else {
+                    return self.restart();
+                }
+            }
+            Message::RestartSave => {
+                self.modal = None;
+                model::unique_names(&mut self.rules);
+                match luaio::write_rules(&self.settings.rules(), &self.rules) {
+                    Ok(_) => return self.restart(),
+                    Err(err) => self.info("Save failed", err.to_string()),
+                }
+            }
+            Message::RestartNow => {
+                self.modal = None;
+                return self.restart();
+            }
+            Message::SettingsCheckUpdates(v) => {
+                if let Some(Modal::Settings { check_updates, .. }) = &mut self.modal {
+                    *check_updates = v;
+                }
+            }
         }
         Task::none()
     }
@@ -1151,6 +1294,7 @@ impl App {
             rules,
             hook,
             reload,
+            ..
         }) = &mut self.modal
         {
             f(rules, hook, reload);
@@ -1162,6 +1306,7 @@ impl App {
             rules,
             hook,
             reload,
+            check_updates,
         }) = self.modal.take()
         else {
             return Task::none();
@@ -1178,6 +1323,7 @@ impl App {
             hook.trim().into()
         };
         self.settings.reload_on_save = reload;
+        self.settings.check_updates = check_updates;
         if let Err(err) = self.settings.save() {
             self.info("Settings", format!("Couldn't save settings:\n\n{err}"));
         }
@@ -1285,6 +1431,7 @@ impl App {
             .spacing(8)
             .padding(8)
             .align_y(iced::Center);
+        bar = bar.push(self.view_update());
         if !hooked {
             bar = bar.push(tooltip(
                 button(text("Load rules in Hyprland").size(13))
@@ -1308,6 +1455,55 @@ impl App {
         match &self.modal {
             None => base,
             Some(m) => overlay(base, self.view_modal(m)),
+        }
+    }
+
+    fn view_update(&self) -> Element<'_, Message> {
+        let small = |s: String| text(s).size(13);
+        match &self.update {
+            UpdateState::Idle => space().into(),
+            UpdateState::Checking => small("Checking for updates…".into()).into(),
+            UpdateState::UpToDate => small(format!(
+                "{APP_TITLE} {} is up to date",
+                update::current_version()
+            ))
+            .into(),
+            UpdateState::Available(found) => row![
+                small(format!("{APP_TITLE} {} is available", found.version)),
+                button(text("Update").size(13))
+                    .on_press(Message::InstallUpdate)
+                    .style(button::primary),
+            ]
+            .spacing(8)
+            .align_y(iced::Center)
+            .into(),
+            UpdateState::Downloading { version, progress } => row![
+                small(format!("Downloading {version} — {}", progress.describe())),
+                progress_bar(0.0..=1.0, progress.fraction().unwrap_or(0.0))
+                    .length(140)
+                    .girth(8),
+            ]
+            .spacing(8)
+            .align_y(iced::Center)
+            .into(),
+            UpdateState::Ready(version) => row![
+                small(format!("Updated to {version}")),
+                button(text("Restart").size(13))
+                    .on_press(Message::Restart)
+                    .style(button::primary),
+            ]
+            .spacing(8)
+            .align_y(iced::Center)
+            .into(),
+            UpdateState::Failed(err) => row![
+                text(err.as_str()).size(13).style(text::danger),
+                button(text("Retry").size(13))
+                    .on_press(Message::CheckUpdates)
+                    .style(button::secondary),
+            ]
+            .spacing(8)
+            .align_y(iced::Center)
+            .into(),
         }
     }
 
@@ -1685,7 +1881,7 @@ impl App {
                 }
                 col.push(ok_cancel(checked.iter().any(|c| *c).then_some(Message::ImportOk))).into()
             }
-            Modal::Settings { rules, hook, reload } => column![
+            Modal::Settings { rules, hook, reload, check_updates } => column![
                 text("Settings").size(18),
                 row![
                     text("Rules file").width(110),
@@ -1713,6 +1909,23 @@ impl App {
                 .spacing(8),
                 row![space().width(110), checkbox(*reload).label("Reload Hyprland after saving").on_toggle(Message::SettingsReload)]
                     .spacing(8),
+                row![
+                    text("Updates").width(110),
+                    text(format!("Version {} · {}", update::current_version(), self.install_kind.describe()))
+                        .width(Fill),
+                    button(text("Check now"))
+                        .on_press_maybe((self.install_kind != InstallKind::Source).then_some(Message::CheckUpdates))
+                        .style(button::secondary),
+                ]
+                .spacing(8)
+                .align_y(iced::Center),
+                row![
+                    space().width(110),
+                    checkbox(*check_updates)
+                        .label("Check for updates at startup")
+                        .on_toggle_maybe((self.install_kind != InstallKind::Source).then_some(Message::SettingsCheckUpdates)),
+                ]
+                .spacing(8),
                 ok_cancel(Some(Message::SettingsOk)),
             ]
             .spacing(12)

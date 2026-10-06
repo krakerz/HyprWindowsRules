@@ -27,7 +27,10 @@ fi
 
 mkdir -p "$bin_dir" "$apps_dir" "$icon_dir"
 
-install -m 755 "$bin" "$bin_dir/hypr-rules"
+# Copy then rename: overwriting the binary in place fails ("text file busy")
+# while the app is running, which is the case when it updates itself.
+install -m 755 "$bin" "$bin_dir/.hypr-rules.new"
+mv -f "$bin_dir/.hypr-rules.new" "$bin_dir/hypr-rules"
 install -m 644 "$dir/hypr-rules.svg" "$icon_dir/hypr-rules.svg"
 
 # Launchers don't reliably inherit ~/.local/bin on $PATH, so point the
@@ -50,4 +53,5 @@ case ":$PATH:" in
     ;;
 esac
 
-echo "Done. Run with: hypr-rules (or 'Hyprland Window Rules' in your app launcher)"
+echo "Done. Run with: hypr-rules (or 'Hyprland Windows Rules' in your app launcher)"
+echo "Updates: the app offers new releases at start-up (Settings → Check now)."
