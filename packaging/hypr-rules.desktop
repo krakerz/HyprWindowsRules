@@ -1,6 +1,6 @@
 [Desktop Entry]
 Type=Application
-Name=Hyprland Window Rules
+Name=Hyprland Windows Rules
 GenericName=Window Rule Manager
 Comment=Manage Hyprland window rules without editing config files
 Exec=hypr-rules

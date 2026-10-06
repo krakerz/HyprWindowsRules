@@ -1,5 +1,5 @@
-hypr-rules — Installation
-==========================
+Hyprland Windows Rules — Installation
+=====================================
 
 Requires Hyprland 0.55+ with the Lua config. Nothing else.
 
@@ -8,7 +8,7 @@ Run the installer:
     ./install.sh
 
 This puts the `hypr-rules` binary in ~/.local/bin and installs the desktop
-entry + icon, so "Hyprland Window Rules" shows up in your app launcher.
+entry + icon, so "Hyprland Windows Rules" shows up in your app launcher.
 
 On first launch the app offers to import your existing window rules, and
 asks before adding its hook lines to ~/.config/hypr/hyprland.lua (that's
