@@ -1,0 +1,109 @@
+name: Build
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - "README.md"
+      - "CHANGELOG.md"
+      - "LICENSE"
+      - "packaging/INSTALL.txt"
+      - ".gitignore"
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # No system -dev packages needed: Wayland/X11/GPU libraries are loaded at
+      # runtime (dlopen) and Lua is vendored, compiled with the runner's cc.
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Format check
+        run: cargo fmt -- --check
+
+      - name: Clippy
+        run: cargo clippy --locked --all-targets -- -D warnings
+
+      - name: Test
+        run: cargo test --locked
+
+      - name: Read version
+        id: version
+        run: |
+          version=$(grep -m1 '^version' Cargo.toml | sed -E 's/version = "(.*)"/\1/')
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Build release binary
+        run: cargo build --release --locked
+
+      - name: Build plain archive
+        run: |
+          set -euo pipefail
+          name="hypr-rules-${{ steps.version.outputs.version }}-x86_64"
+          mkdir "$name"
+          cp target/release/hypr-rules "$name/"
+          cp packaging/hypr-rules.desktop packaging/hypr-rules.svg packaging/INSTALL.txt "$name/"
+          cp packaging/install.sh packaging/uninstall.sh "$name/"
+          chmod +x "$name/hypr-rules" "$name/install.sh" "$name/uninstall.sh"
+          tar -czf "$name.tar.gz" "$name"
+          echo "ARCHIVE=$name.tar.gz" >> "$GITHUB_ENV"
+
+      - name: Build AppImage
+        run: |
+          set -euo pipefail
+          appdir=AppDir
+          mkdir -p "$appdir/usr/bin"
+          cp target/release/hypr-rules "$appdir/usr/bin/"
+          cp packaging/hypr-rules.desktop packaging/hypr-rules.svg "$appdir/"
+          ln -s usr/bin/hypr-rules "$appdir/AppRun"
+          curl -fsSL -o appimagetool \
+            https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage
+          chmod +x appimagetool
+          out="hypr-rules-${{ steps.version.outputs.version }}-x86_64.AppImage"
+          # The runner has no FUSE; run appimagetool from its extracted contents
+          ARCH=x86_64 APPIMAGE_EXTRACT_AND_RUN=1 ./appimagetool "$appdir" "$out"
+          echo "APPIMAGE=$out" >> "$GITHUB_ENV"
+
+      - name: Extract changelog section
+        run: |
+          set -euo pipefail
+          scripts/release-notes.sh "${{ steps.version.outputs.version }}" > release-notes.md
+          if [ ! -s release-notes.md ]; then
+            prev=$(git describe --tags --abbrev=0 2>/dev/null || true)
+            {
+              echo "No CHANGELOG.md section for this version — commit history instead:"
+              echo ""
+              git log --format='- %s' ${prev:+"$prev"..HEAD}
+            } > release-notes.md
+          fi
+          {
+            echo ""
+            echo "---"
+            echo "[Full changelog](${{ github.server_url }}/${{ github.repository }}/blob/main/CHANGELOG.md)"
+          } >> release-notes.md
+
+      - name: Draft release
+        uses: softprops/action-gh-release@v2
+        with:
+          draft: true
+          tag_name: v${{ steps.version.outputs.version }}
+          name: ${{ steps.version.outputs.version }}
+          body_path: release-notes.md
+          files: |
+            ${{ env.ARCHIVE }}
+            ${{ env.APPIMAGE }}

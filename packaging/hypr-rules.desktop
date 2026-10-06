@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Hyprland Window Rules
+GenericName=Window Rule Manager
+Comment=Manage Hyprland window rules without editing config files
+Exec=hypr-rules
+Icon=hypr-rules
+Terminal=false
+Categories=Settings;DesktopSettings;
+Keywords=hyprland;window;rules;float;workspace;
+StartupWMClass=hypr-rules
