@@ -23,10 +23,11 @@ Hyprland 0.55+ moved to a Lua config; window rules are `hl.window_rule({ match =
 - Set up or verify the one-click hook in your Hyprland config to load the rules file automatically.
 - Light, dark, or follow-the-system theme, switchable from the toolbar.
 - Updates itself from GitHub releases: a notice at start-up, then one click to download, install and restart.
+- Audio routes: send a program's sound and microphone to a chosen device (e.g. chat apps to a headset's chat channel), applied live by a small WirePlumber script.
 
 ## Installation
 
-Requires Hyprland 0.55+ with the Lua config — nothing else at runtime. Download from the [Releases page](https://github.com/krakerz/HyprWindowsRules/releases).
+Requires Hyprland 0.55+ with the Lua config — nothing else at runtime. Audio routes additionally need PipeWire with WirePlumber 0.5 (optional feature). Download from the [Releases page](https://github.com/krakerz/HyprWindowsRules/releases).
 
 **Option A: Tar.gz archive**
 Extract the downloaded `hypr-rules-<version>-x86_64.tar.gz` and run:
@@ -85,6 +86,8 @@ Because the file is loaded with `require`, Hyprland watches it and reloads by it
 
 **Updates:** The app checks for a new release at start-up and shows a notice in the status bar if one is available. Click to download and install automatically with a progress bar, then restart. Settings → Updates shows your current version and install method, with a "Check now" button and a "Check for updates at startup" toggle (on by default). Builds run from source (cargo run or the binary in target/) don't update themselves.
 
+**Audio routes:** The Audio routes tab lets you send a program's sound (output) and microphone (input) to a chosen device, e.g. Discord + Mumble to a headset's chat channel while games use the default device. Pick programs by executable name (shown when they're playing or recording, or type it) — they're matched whether they connect via PulseAudio or ALSA. Devices are matched by name, plus an optional pattern with `*` wildcard for devices whose internal name changes between connection modes. The first time you save, the app installs a small WirePlumber script to `~/.local/share/wireplumber/scripts/hypr-rules-audio.lua` and config to `~/.config/wireplumber/wireplumber.conf.d/60-hypr-rules-audio.conf`, and WirePlumber needs one restart (audio drops briefly) to load them. After that, changes apply to running programs immediately and keep working when the app is closed. Routes override any device the program picked itself or one you moved it to by hand in a mixer. Turn off in the tab stops routing right away and removes both files, but keeps your routes so Turn on brings them back; your other WirePlumber config is never touched. Tip: set the program's own audio device setting to "Default" (e.g. in Discord or Mumble settings).
+
 ## FAQ
 
 **Why doesn't my rule apply to a window that's already open?**
@@ -101,6 +104,9 @@ The hook line is gone from the "Load it from" file, e.g. because a Caelestia upd
 
 **Can I still edit hypr-rules.lua by hand?**
 Yes, as long as it remains a list of `hl.window_rule` calls; comments are not preserved when the app saves.
+
+**Does uninstall.sh remove the audio routing?**
+No — like your window rules, it keeps working without the app. Use Turn off in the Audio routes tab first if you want it gone.
 
 ---
 

@@ -6,6 +6,7 @@
 
 ### Added
 - Built-in updater: checks for a new release at start-up and installs it with one click.
+- Audio routes: send a program's sound and microphone to a chosen device, e.g. chat apps to a headset's chat channel.
 
 ### Changed
 - The app is now called Hyprland Windows Rules.

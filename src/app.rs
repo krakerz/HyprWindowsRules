@@ -12,6 +12,7 @@ use iced::widget::{
 use iced::{Color, Element, Fill, Font, Subscription, Task, Theme, window};
 use serde_json::Value as Json;
 
+use crate::audio_ui::{self, AudioTab};
 use crate::model::{self, Kind, MatchField, Mode, PATTERN_KEYS, Rule, Value, effect_kind};
 use crate::settings::{self, Settings, ThemePref};
 use crate::update::{self, InstallKind, Progress, Update};
@@ -306,6 +307,14 @@ pub struct App {
     modal: Option<Modal>,
     install_kind: InstallKind,
     update: UpdateState,
+    tab: Tab,
+    audio: AudioTab,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Tab {
+    Rules,
+    Audio,
 }
 
 enum UpdateState {
@@ -403,6 +412,9 @@ pub enum Message {
     RestartSave,
     RestartNow,
     SettingsCheckUpdates(bool),
+    // tabs
+    Tab(Tab),
+    Audio(audio_ui::Msg),
 }
 
 pub fn run() -> iced::Result {
@@ -466,6 +478,8 @@ impl App {
             modal: None,
             install_kind: update::install_kind(),
             update: UpdateState::Idle,
+            tab: Tab::Rules,
+            audio: AudioTab::default_closed(),
         };
         app.refresh_windows();
         app.load_rules();
@@ -477,11 +491,20 @@ impl App {
         } else {
             Task::none()
         };
-        (app, task)
+        let (audio, audio_task) = AudioTab::new();
+        app.audio = audio;
+        (app, Task::batch([task, audio_task.map(Message::Audio)]))
     }
 
     fn title(&self) -> String {
-        format!("{}{APP_TITLE}", if self.dirty { "• " } else { "" })
+        format!(
+            "{}{APP_TITLE}",
+            if self.dirty || self.audio.dirty {
+                "• "
+            } else {
+                ""
+            }
+        )
     }
 
     /// None lets iced follow the system light/dark preference.
@@ -780,7 +803,21 @@ impl App {
         {
             return Task::none();
         }
+        if self.tab == Tab::Audio
+            && matches!(
+                message,
+                Message::AddRule
+                    | Message::FromWindow
+                    | Message::Duplicate
+                    | Message::Delete
+                    | Message::Move(_)
+            )
+        {
+            return Task::none();
+        }
         match message {
+            Message::Tab(tab) => self.tab = tab,
+            Message::Audio(msg) => return self.audio.update(msg).map(Message::Audio),
             Message::AddRule => {
                 self.insert(Rule {
                     matches: vec![MatchField::new("class")],
@@ -884,6 +921,10 @@ impl App {
                     reload: self.settings.reload_on_save,
                     check_updates: self.settings.check_updates,
                 });
+            }
+            Message::Save if self.tab == Tab::Audio => {
+                self.modal = None;
+                return self.audio.save().map(Message::Audio);
             }
             Message::Save => {
                 self.modal = None;
@@ -1047,7 +1088,7 @@ impl App {
             Message::SettingsOk => return self.settings_ok(),
 
             Message::CloseRequested => {
-                if self.dirty {
+                if self.dirty || self.audio.dirty {
                     self.modal = Some(Modal::Message {
                         title: "Unsaved changes".into(),
                         body: "Save changes before closing?".into(),
@@ -1063,6 +1104,17 @@ impl App {
             }
             Message::CloseSave => {
                 self.modal = None;
+                if self.audio.dirty {
+                    // Only the files matter on the way out; the follow-up refresh is dropped
+                    let _ = self.audio.save();
+                    if self.audio.dirty {
+                        self.tab = Tab::Audio;
+                        return Task::none();
+                    }
+                }
+                if !self.dirty {
+                    return iced::exit();
+                }
                 model::unique_names(&mut self.rules);
                 match luaio::write_rules(&self.settings.rules(), &self.rules) {
                     Ok(_) => return iced::exit(),
@@ -1366,7 +1418,21 @@ impl App {
             }
         };
         let sep = || space().width(12);
-        let toolbar = row![
+        let tab_button = |label: &'static str, tab: Tab| {
+            button(text(label).size(14))
+                .on_press(Message::Tab(tab))
+                .style(if self.tab == tab {
+                    button::primary
+                } else {
+                    button::text
+                })
+        };
+        let tabs = row![
+            tab_button("Window rules", Tab::Rules),
+            tab_button("Audio routes", Tab::Audio)
+        ]
+        .spacing(2);
+        let rule_tools: Element<_> = row![
             tool("Add rule", Message::AddRule, "Ctrl+N"),
             tool(
                 "From window…",
@@ -1389,8 +1455,19 @@ impl App {
                 "Import window rules from another Hyprland .lua file"
             ),
             tool("Refresh windows", Message::Refresh, "F5"),
-            tool("Settings", Message::OpenSettings, ""),
+        ]
+        .spacing(6)
+        .into();
+        let tab_tools = match self.tab {
+            Tab::Rules => rule_tools,
+            Tab::Audio => self.audio.toolbar().map(Message::Audio),
+        };
+        let toolbar = row![
+            tabs,
+            sep(),
+            tab_tools,
             space().width(Fill),
+            tool("Settings", Message::OpenSettings, ""),
             pick_list(
                 &ThemePref::ALL[..],
                 Some(self.settings.theme),
@@ -1405,13 +1482,20 @@ impl App {
         .spacing(6)
         .padding(8);
 
-        let body = row![
-            container(self.view_list()).width(380),
-            container(self.view_editor()).width(Fill),
-        ]
-        .spacing(8)
-        .padding([0, 8])
-        .height(Fill);
+        let body: Element<_> = match self.tab {
+            Tab::Rules => row![
+                container(self.view_list()).width(380),
+                container(self.view_editor()).width(Fill),
+            ]
+            .spacing(8)
+            .padding([0, 8])
+            .height(Fill)
+            .into(),
+            Tab::Audio => container(self.audio.view().map(Message::Audio))
+                .padding([0, 8])
+                .height(Fill)
+                .into(),
+        };
 
         let hooked = settings::hook_installed(&self.settings.hook(), &self.settings.rules());
         let state = if self.dirty {
