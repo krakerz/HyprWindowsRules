@@ -2,14 +2,23 @@
 
 ## [Unreleased]
 
+## [0.4.0] — 2026-10-07
+
+### Changed
+- Only the 10 newest backups of the rules file are kept.
+
 ## [0.3.0] — 2026-10-06
 
 ### Added
 - Built-in updater: checks for a new release at start-up and installs it with one click.
+- All window-rule effects Hyprland 0.56 supports are offered under "Other properties" (16 more, e.g. `no_follow_mouse`, `border_color`, `confine_pointer`).
 - Audio routes: send a program's sound and microphone to a chosen device, e.g. chat apps to a headset's chat channel.
 
 ### Changed
 - The app is now called Hyprland Windows Rules.
+
+### Fixed
+- Turning audio routing off no longer deletes your audio routes.
 
 ## [0.2.0] — 2026-10-06
 
