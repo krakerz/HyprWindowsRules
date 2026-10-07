@@ -380,7 +380,36 @@ pub fn backup_file(path: &Path) -> io::Result<PathBuf> {
         .unwrap_or_default();
     let backup = path.with_file_name(format!("{name}.{stamp}.bak"));
     fs::copy(path, &backup)?;
+    prune_backups(path, KEEP_BACKUPS);
     Ok(backup)
+}
+
+const KEEP_BACKUPS: usize = 10;
+
+/// Deletes all but the newest `keep` backups of `path` (the timestamp in the
+/// name sorts chronologically).
+fn prune_backups(path: &Path, keep: usize) {
+    let (Some(dir), Some(name)) = (path.parent(), path.file_name()) else {
+        return;
+    };
+    let prefix = format!("{}.", name.to_string_lossy());
+    let Ok(entries) = fs::read_dir(dir) else {
+        return;
+    };
+    let mut backups: Vec<PathBuf> = entries
+        .filter_map(Result::ok)
+        .map(|e| e.path())
+        .filter(|p| {
+            p.file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .is_some_and(|n| n.starts_with(&prefix) && n.ends_with(".bak"))
+        })
+        .collect();
+    backups.sort();
+    let excess = backups.len().saturating_sub(keep);
+    for old in &backups[..excess] {
+        let _ = fs::remove_file(old);
+    }
 }
 
 fn atomic_write(path: &Path, text: &str) -> io::Result<()> {
@@ -421,6 +450,38 @@ mod tests {
         assert!(out.contains("opacity = 1.0"), "{out}");
         fs::write(&path, &out).unwrap();
         assert_eq!(evaluate_rules(&path).unwrap().rules, res.rules);
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn keeps_only_the_newest_backups() {
+        let dir = std::env::temp_dir().join(format!("hypr-rules-prune-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("hypr-rules.lua");
+        fs::write(&path, "x").unwrap();
+        for i in 0..13 {
+            fs::write(
+                dir.join(format!("hypr-rules.lua.20260101-0000{i:02}.bak")),
+                "",
+            )
+            .unwrap();
+        }
+        fs::write(dir.join("other.lua.20260101-000000.bak"), "").unwrap();
+        prune_backups(&path, 10);
+        let left: Vec<_> = fs::read_dir(&dir)
+            .unwrap()
+            .filter_map(Result::ok)
+            .map(|e| e.file_name())
+            .collect();
+        assert_eq!(
+            left.iter()
+                .filter(|n| n.to_string_lossy().starts_with("hypr-rules.lua."))
+                .count(),
+            10
+        );
+        assert!(!dir.join("hypr-rules.lua.20260101-000000.bak").exists());
+        assert!(dir.join("hypr-rules.lua.20260101-000012.bak").exists());
+        assert!(dir.join("other.lua.20260101-000000.bak").exists());
         fs::remove_dir_all(&dir).unwrap();
     }
 }
