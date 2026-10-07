@@ -474,7 +474,16 @@ impl Rule {
                     if let Value::Map(m) = v {
                         rule.matches = ordered(m, &MATCH_KEYS)
                             .into_iter()
-                            .map(|(k, v)| MatchField::from_value(&k, v))
+                            .flat_map(|(k, v)| match v {
+                                // One field holding "(?:a)|(?:b)" is how OR'ed rows are saved
+                                Value::Str(p) if PATTERN_KEYS.contains(&k.as_str()) => {
+                                    split_alternatives(&p)
+                                        .into_iter()
+                                        .map(|alt| MatchField::from_value(&k, Value::Str(alt)))
+                                        .collect::<Vec<_>>()
+                                }
+                                v => vec![MatchField::from_value(&k, v)],
+                            })
                             .collect();
                     }
                 }
@@ -493,12 +502,40 @@ impl Rule {
         if !self.enabled {
             spec.push(("enabled".into(), Value::Bool(false)));
         }
-        let m = self
+        // Hyprland's match table holds one value per field, so several rows on the
+        // same field are OR'ed into a single pattern.
+        let mut m: Vec<(String, Value)> = Vec::new();
+        let mut alternatives: Vec<(String, Vec<String>)> = Vec::new();
+        for f in self
             .matches
             .iter()
             .filter(|m| !m.text.is_empty() || !m.is_pattern() || m.raw.is_some())
-            .map(|m| (m.key.clone(), m.spec_value()))
-            .collect();
+        {
+            if f.is_pattern() {
+                match alternatives.iter_mut().find(|(k, _)| *k == f.key) {
+                    Some((_, alts)) => alts.push(f.pattern()),
+                    None => {
+                        alternatives.push((f.key.clone(), vec![f.pattern()]));
+                        m.push((f.key.clone(), Value::Str(String::new())));
+                    }
+                }
+            } else {
+                m.push((f.key.clone(), f.spec_value()));
+            }
+        }
+        for (key, alts) in alternatives {
+            let joined = if alts.len() == 1 {
+                alts.into_iter().next().unwrap()
+            } else {
+                alts.iter()
+                    .map(|a| format!("(?:{a})"))
+                    .collect::<Vec<_>>()
+                    .join("|")
+            };
+            if let Some(slot) = m.iter_mut().find(|(k, _)| *k == key) {
+                slot.1 = Value::Str(joined);
+            }
+        }
         spec.push(("match".into(), Value::Map(m)));
         spec.extend(self.effects.iter().cloned());
         spec
@@ -560,7 +597,13 @@ impl Rule {
                         Json::String(s) => s.clone(),
                         other => other.to_string(),
                     };
-                    if m.matches(&s) != Some(true) {
+                    // Rows on the same field are alternatives: one of them must match
+                    let any = self
+                        .matches
+                        .iter()
+                        .filter(|o| o.key == m.key && o.is_pattern())
+                        .any(|o| o.matches(&s) == Some(true));
+                    if !any {
                         return false;
                     }
                 }
@@ -572,6 +615,49 @@ impl Rule {
             }
         }
         true
+    }
+}
+
+/// "(?:a)|(?:b)" → ["a", "b"]; anything else stays one pattern.
+fn split_alternatives(p: &str) -> Vec<String> {
+    let b = p.as_bytes();
+    let mut parts = Vec::new();
+    let mut i = 0;
+    while i < b.len() {
+        if !p[i..].starts_with("(?:") {
+            return vec![p.to_string()];
+        }
+        let (mut depth, mut j) = (0i32, i);
+        while j < b.len() {
+            match b[j] {
+                b'\\' => j += 1,
+                b'(' => depth += 1,
+                b')' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        break;
+                    }
+                }
+                _ => {}
+            }
+            j += 1;
+        }
+        if j >= b.len() {
+            return vec![p.to_string()];
+        }
+        parts.push(p[i + 3..j].to_string());
+        i = j + 1;
+        if i < b.len() {
+            if b[i] != b'|' {
+                return vec![p.to_string()];
+            }
+            i += 1;
+        }
+    }
+    if parts.len() < 2 {
+        vec![p.to_string()]
+    } else {
+        parts
     }
 }
 
@@ -656,5 +742,50 @@ mod tests {
         assert_eq!(f.matches("opera"), Some(true));
         let f = MatchField::from_value("class", Value::Str("a|b".into()));
         assert_eq!(f.matches("ab"), Some(false));
+    }
+
+    #[test]
+    fn same_field_rows_are_ored() {
+        let mut rule = Rule {
+            matches: vec![
+                MatchField::exact("class", "org.kde.dolphin"),
+                MatchField {
+                    mode: Mode::Starts,
+                    ..MatchField::exact("title", "Extracting")
+                },
+                MatchField {
+                    mode: Mode::Starts,
+                    ..MatchField::exact("title", "Copy")
+                },
+            ],
+            ..Default::default()
+        };
+        let spec = rule.to_spec();
+        let Value::Map(m) = &spec.iter().find(|(k, _)| k == "match").unwrap().1 else {
+            panic!()
+        };
+        assert_eq!(
+            m[1],
+            (
+                "title".into(),
+                Value::Str("(?:Extracting.*)|(?:Copy.*)".into())
+            )
+        );
+        let back = Rule::from_spec(spec);
+        assert_eq!(back.matches.len(), 3);
+        assert_eq!(
+            (back.matches[2].mode, back.matches[2].text.as_str()),
+            (Mode::Starts, "Copy")
+        );
+        rule = back;
+        let win = |t: &str| serde_json::json!({"class": "org.kde.dolphin", "title": t});
+        assert!(rule.matches_window(&win("Copying - Dolphin")));
+        assert!(rule.matches_window(&win("Extracting x")));
+        assert!(!rule.matches_window(&win("Home - Dolphin")));
+        assert_eq!(
+            split_alternatives("(?:a(b)c)|(?:(?i)d)"),
+            vec!["a(b)c", "(?i)d"]
+        );
+        assert_eq!(split_alternatives("a|b"), vec!["a|b"]);
     }
 }
