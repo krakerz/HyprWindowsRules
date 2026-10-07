@@ -147,7 +147,7 @@ pub enum Kind {
 }
 
 /// Known effects with the value type the editor offers for them.
-pub const EFFECTS: [(&str, Kind); 41] = [
+pub const EFFECTS: [(&str, Kind); 57] = [
     ("float", Kind::Bool),
     ("tile", Kind::Bool),
     ("size", Kind::Pair),
@@ -189,6 +189,23 @@ pub const EFFECTS: [(&str, Kind); 41] = [
     ("max_size", Kind::Pair),
     ("animation", Kind::Str),
     ("tag", Kind::Str),
+    // Added from Hyprland 0.56's rule enum (WindowRuleEffectContainer.hpp)
+    ("group", Kind::Str),
+    ("no_close_for", Kind::Int),
+    ("rounding_power", Kind::Float),
+    ("border_color", Kind::Str),
+    ("focus_on_activate", Kind::Bool),
+    ("nearest_neighbor", Kind::Bool),
+    ("no_follow_mouse", Kind::Bool),
+    ("no_shortcuts_inhibit", Kind::Bool),
+    ("force_rgbx", Kind::Bool),
+    ("sync_fullscreen", Kind::Bool),
+    ("no_vrr", Kind::Bool),
+    ("no_auto_hdr", Kind::Bool),
+    ("tonemap", Kind::Str),
+    ("scroll_mouse", Kind::Float),
+    ("scroll_touchpad", Kind::Float),
+    ("confine_pointer", Kind::Bool),
 ];
 
 pub fn effect_kind(key: &str) -> Option<Kind> {

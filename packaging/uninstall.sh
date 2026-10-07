@@ -2,6 +2,7 @@
 # Removes what install.sh installed. Your rules (~/.config/hypr-rules/) and
 # the hook lines in your Hyprland config are left alone — Hyprland keeps
 # applying the rules without the app.
+# Audio routes (WirePlumber script + config) also stay; use Turn off in the app's Audio routes tab to remove them.
 set -euo pipefail
 
 bin_dir="$HOME/.local/bin"

@@ -1,4 +1,6 @@
 mod app;
+mod audio;
+mod audio_ui;
 mod hypr;
 mod luaio;
 mod model;
