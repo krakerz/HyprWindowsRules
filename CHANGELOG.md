@@ -2,6 +2,15 @@
 
 ## [Unreleased]
 
+## [0.5.0] — 2026-10-07
+
+### Added
+- Several conditions on the same field now mean "any of these", e.g. title starts with Extracting or Copy.
+- "Copy from window…" buttons next to Size and Position fill them from an open window.
+
+### Fixed
+- A second condition on the same field no longer silently replaces the first when saving.
+
 ## [0.4.0] — 2026-10-07
 
 ### Changed

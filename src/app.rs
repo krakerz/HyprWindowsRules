@@ -271,6 +271,9 @@ enum Modal {
         use_title: bool,
         copy_geom: bool,
         copy_ws: bool,
+        /// Copy the picked window's size/position into the selected rule instead
+        /// of creating a new rule.
+        for_current: Option<Geometry>,
     },
     Import {
         path: PathBuf,
@@ -311,6 +314,13 @@ pub struct App {
     audio: AudioTab,
 }
 
+/// Which part of a window's geometry "Copy from window…" fills in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Geometry {
+    Size,
+    Position,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Tab {
     Rules,
@@ -335,6 +345,7 @@ pub enum Message {
     // toolbar
     AddRule,
     FromWindow,
+    GeometryFromWindow(Geometry),
     Duplicate,
     Delete,
     DeleteConfirmed,
@@ -835,6 +846,31 @@ impl App {
                         use_title: false,
                         copy_geom: true,
                         copy_ws: false,
+                        for_current: None,
+                    });
+                }
+            }
+            Message::GeometryFromWindow(part) => {
+                self.refresh_windows();
+                let Some(rule) = self.selected.and_then(|i| self.rules.get(i)) else {
+                    return Task::none();
+                };
+                if self.clients.is_empty() {
+                    self.info("No windows", "No open windows were found.");
+                } else {
+                    // Start on a window this rule matches, if one is open
+                    let selected = self
+                        .clients
+                        .iter()
+                        .position(|c| rule.matches_window(c))
+                        .or(Some(0));
+                    self.modal = Some(Modal::Picker {
+                        clients: self.clients.clone(),
+                        selected,
+                        use_title: false,
+                        copy_geom: true,
+                        copy_ws: false,
+                        for_current: Some(part),
                     });
                 }
             }
@@ -1226,6 +1262,7 @@ impl App {
             use_title,
             copy_geom,
             copy_ws,
+            ..
         }) = &mut self.modal
         {
             f((clients, selected, use_title, copy_geom, copy_ws));
@@ -1239,11 +1276,21 @@ impl App {
             use_title,
             copy_geom,
             copy_ws,
+            for_current,
         }) = self.modal.take()
         else {
             return;
         };
         let Some(c) = clients.get(i) else { return };
+        if let Some(part) = for_current {
+            let (w, h) = hypr::size(c);
+            let (x, y) = hypr::relative_position(c, &self.monitors);
+            self.edit(|e| match part {
+                Geometry::Size => (e.size_w, e.size_h) = (w.to_string(), h.to_string()),
+                Geometry::Position => (e.move_x, e.move_y) = (x.to_string(), y.to_string()),
+            });
+            return;
+        }
         let class = hypr::str_field(c, "class");
         let mut matches = vec![MatchField::exact("class", class)];
         if use_title {
@@ -1708,6 +1755,12 @@ impl App {
                     .on_press(Message::MatchRemove(i))
                     .style(button::text),
             );
+            let earlier_same_field = rule.matches[..i]
+                .iter()
+                .any(|o| o.is_pattern() && o.key == m.key);
+            if earlier_same_field {
+                conds = conds.push(text("or").size(12).style(text::secondary));
+            }
             conds = conds.push(r);
         }
         let preview = self.preview(rule);
@@ -1720,6 +1773,9 @@ impl App {
                         .on_press(Message::MatchAdd)
                         .style(button::secondary)
                 ],
+                text("Different fields must all match; several conditions on the same field match if any one does.")
+                    .size(12)
+                    .style(text::secondary),
                 preview
             ]
             .spacing(8)
@@ -1747,10 +1803,22 @@ impl App {
                 row![label("State"), pick_list(&FloatState::ALL[..], Some(ed.state), Message::State).width(260)]
                     .spacing(8)
                     .align_y(iced::Center),
-                row![label("Size"), pair(&ed.size_w, &ed.size_h, "width", "height", Message::SizeW, Message::SizeH)]
+                row![
+                    label("Size"),
+                    pair(&ed.size_w, &ed.size_h, "width", "height", Message::SizeW, Message::SizeH),
+                    button(text("Copy from window…").size(13))
+                        .on_press(Message::GeometryFromWindow(Geometry::Size))
+                        .style(button::secondary),
+                ]
                     .spacing(8)
                     .align_y(iced::Center),
-                row![label("Position"), pair(&ed.move_x, &ed.move_y, "x", "y", Message::MoveX, Message::MoveY)]
+                row![
+                    label("Position"),
+                    pair(&ed.move_x, &ed.move_y, "x", "y", Message::MoveX, Message::MoveY),
+                    button(text("Copy from window…").size(13))
+                        .on_press(Message::GeometryFromWindow(Geometry::Position))
+                        .style(button::secondary),
+                ]
                     .spacing(8)
                     .align_y(iced::Center),
                 row![space().width(110), checkbox(ed.center).label("Center on screen").on_toggle(Message::Center)].spacing(8),
@@ -1898,7 +1966,7 @@ impl App {
                 }
                 column![text(title.as_str()).size(18), text(body.as_str()), btns].spacing(16).width(560).into()
             }
-            Modal::Picker { clients, selected, use_title, copy_geom, copy_ws } => {
+            Modal::Picker { clients, selected, use_title, copy_geom, copy_ws, for_current } => {
                 let mut list = Column::new().spacing(2);
                 for (i, c) in clients.iter().enumerate() {
                     let cells = row![
@@ -1911,8 +1979,13 @@ impl App {
                     let style = if *selected == Some(i) { button::primary } else { button::text };
                     list = list.push(button(cells).width(Fill).on_press(Message::PickerSelect(i)).style(style));
                 }
-                column![
-                    text("Create rule from an open window").size(18),
+                let mut col = column![
+                    text(match for_current {
+                        Some(Geometry::Size) => "Copy the size of an open window",
+                        Some(Geometry::Position) => "Copy the position of an open window",
+                        None => "Create rule from an open window",
+                    })
+                    .size(18),
                     row![
                         text("Class").width(220),
                         text("Title").width(Fill),
@@ -1922,16 +1995,29 @@ impl App {
                     .spacing(8)
                     .padding([0, 10]),
                     scrollable(list).height(320),
-                    checkbox(*use_title)
-                        .label("Also match the window title (only this exact window, not every window of the app)")
-                        .on_toggle(Message::PickerUseTitle),
-                    checkbox(*copy_geom).label("Copy its current size and position").on_toggle(Message::PickerCopyGeom),
-                    checkbox(*copy_ws).label("Copy its current workspace").on_toggle(Message::PickerCopyWs),
-                    ok_cancel(selected.map(|_| Message::PickerOk)),
                 ]
                 .spacing(10)
-                .width(860)
-                .into()
+                .width(860);
+                if let Some(part) = for_current {
+                    let hint = match part {
+                        Geometry::Size => "Its current size replaces the rule's Size.",
+                        Geometry::Position => "Its current position (relative to its monitor) replaces the rule's Position.",
+                    };
+                    return col
+                        .push(text(hint).size(13).style(text::secondary))
+                        .push(ok_cancel(selected.map(|_| Message::PickerOk)))
+                        .into();
+                }
+                col = col.extend([
+                    checkbox(*use_title)
+                        .label("Also match the window title (only this exact window, not every window of the app)")
+                        .on_toggle(Message::PickerUseTitle)
+                        .into(),
+                    checkbox(*copy_geom).label("Copy its current size and position").on_toggle(Message::PickerCopyGeom).into(),
+                    checkbox(*copy_ws).label("Copy its current workspace").on_toggle(Message::PickerCopyWs).into(),
+                    ok_cancel(selected.map(|_| Message::PickerOk)).into(),
+                ]);
+                col.into()
             }
             Modal::Import { path, rules, checked, can_comment, comment_out, warning } => {
                 let mut list = Column::new().spacing(4);
