@@ -393,6 +393,14 @@ impl AudioTab {
                     .cloned()
                     .map(|d| Choice(Some(d))),
             };
+            // Internal (node.name) names of the connected devices, plus the route's own
+            // when its device is unplugged, so it can still be picked or edited
+            let mut hw_names: Vec<String> = devices.iter().map(|d| d.name.clone()).collect();
+            if let Some(name) = current.as_ref().and_then(|d| d.name.clone())
+                && !hw_names.contains(&name)
+            {
+                hw_names.push(name);
+            }
             let mut col = column![
                 row![
                     label(title),
@@ -410,18 +418,40 @@ impl AudioTab {
             ]
             .spacing(6);
             if let Some(dev) = current {
+                let connected = devices
+                    .iter()
+                    .any(|d| matches(dev, d) || pattern_matches(dev, d));
+                if !connected {
+                    col = col.push(
+                        row![
+                            space().width(110),
+                            text(format!(
+                                "{} isn't connected — these programs use the default device until it's back, then move to it automatically.",
+                                dev.label()
+                            ))
+                            .size(13)
+                            .style(text::warning),
+                        ]
+                        .spacing(8),
+                    );
+                }
                 col = col.push(
                     row![
-                        space().width(110),
+                        text("Device name").size(13).width(110),
+                        pick_list(hw_names, None::<String>, on_pattern)
+                            .placeholder("Pick a hardware name…")
+                            .text_size(13)
+                            .width(260),
                         text_input(
-                            "also match device names like alsa_output.usb-Brand_*-01.pro-output-0",
+                            "optional, e.g. alsa_output.usb-Brand_*-01.pro-output-0",
                             dev.pattern.as_deref().unwrap_or("")
                         )
                         .on_input(on_pattern)
                         .size(13)
                         .width(Fill),
                     ]
-                    .spacing(8),
+                    .spacing(8)
+                    .align_y(iced::Center),
                 );
             }
             col
@@ -465,7 +495,7 @@ impl AudioTab {
                 column![
                     device_row("Output", &self.snap.outputs, &route.output, Msg::Output, Msg::OutputPattern),
                     device_row("Input", &self.snap.inputs, &route.input, Msg::Input, Msg::InputPattern),
-                    text("A device matches by its name as shown here, or by the device-name pattern — handy when a device's name changes between connection modes. When it's unplugged the program uses the default device, and moves back when it returns.")
+                    text("A device matches by its name as shown here, or by its hardware name. Pick a hardware name, then replace the part that changes with * if the device's name differs between connection modes (e.g. dongle vs USB). When it's unplugged the program uses the default device, and moves back when it returns.")
                         .size(13)
                         .style(text::secondary),
                 ]
@@ -506,8 +536,64 @@ fn set_pattern(dev: &mut Option<Device>, pattern: String) {
     }
 }
 
+/// Mirrors the script's glob: `*` matches anything, everything else is literal.
+fn pattern_matches(dev: &Device, info: &DeviceInfo) -> bool {
+    let Some(pattern) = &dev.pattern else {
+        return false;
+    };
+    let parts: Vec<&str> = pattern.split('*').collect();
+    let name = info.name.as_str();
+    if parts.len() == 1 {
+        return name == pattern;
+    }
+    let (first, last) = (parts[0], parts[parts.len() - 1]);
+    if !name.starts_with(first) || !name.ends_with(last) || name.len() < first.len() + last.len() {
+        return false;
+    }
+    let mut rest = &name[first.len()..name.len() - last.len()];
+    for part in &parts[1..parts.len() - 1] {
+        match rest.find(part) {
+            Some(i) => rest = &rest[i + part.len()..],
+            None => return false,
+        }
+    }
+    true
+}
+
 /// Mirrors the script's device_matches for the description and exact name.
 fn matches(dev: &Device, info: &DeviceInfo) -> bool {
     dev.description.as_deref() == Some(info.description.as_str())
         || dev.name.as_deref() == Some(info.name.as_str())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn glob_patterns_match_like_the_script() {
+        let dev = |p: &str| Device {
+            pattern: Some(p.into()),
+            ..Default::default()
+        };
+        let info = |n: &str| DeviceInfo {
+            description: String::new(),
+            name: n.into(),
+        };
+        let chat = "alsa_output.usb-Audeze_LLC_Audeze_Maxwell_XBOX_*-01.pro-output-0";
+        assert!(pattern_matches(
+            &dev(chat),
+            &info("alsa_output.usb-Audeze_LLC_Audeze_Maxwell_XBOX_Dongle_0000-01.pro-output-0")
+        ));
+        assert!(pattern_matches(
+            &dev(chat),
+            &info("alsa_output.usb-Audeze_LLC_Audeze_Maxwell_XBOX_Headset_0000-01.pro-output-0")
+        ));
+        assert!(!pattern_matches(
+            &dev(chat),
+            &info("alsa_output.usb-Audeze_LLC_Audeze_Maxwell_XBOX_Dongle_0000-01.pro-output-1")
+        ));
+        assert!(pattern_matches(&dev("a*b*c"), &info("axxbyyc")));
+        assert!(!pattern_matches(&dev("abc"), &info("abcd")));
+    }
 }
