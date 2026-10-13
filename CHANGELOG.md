@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+## [0.6.0] — 2026-10-13
+
+### Added
+- Audio routes: a drop-down of each device's hardware name, so a device can be matched across connection modes without typing its name.
+- Audio routes: a notice when a route's device isn't connected, saying the programs use the default device until it returns.
+
 ## [0.5.0] — 2026-10-07
 
 ### Added
