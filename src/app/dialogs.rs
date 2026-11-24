@@ -475,6 +475,19 @@ impl App {
                         .spacing(GAP)
                         .align_y(iced::Center),
                     ),
+                    style::form_row(
+                        "Property docs",
+                        row![
+                            container(style::single_line(self.catalog.status(), style::TEXT))
+                                .width(Fill)
+                                .clip(true),
+                            control_btn("Refresh").on_press_maybe(
+                                (!self.docs_busy).then_some(Message::DocsRefresh)
+                            ),
+                        ]
+                        .spacing(GAP)
+                        .align_y(iced::Center),
+                    ),
                     aligned(
                         checkbox(*check_updates)
                             .label("Check for updates at startup")

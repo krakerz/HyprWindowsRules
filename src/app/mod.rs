@@ -9,9 +9,8 @@ use iced::{Subscription, Task, Theme, window};
 use serde_json::Value as Json;
 
 use crate::audio_ui::{self, AudioTab};
-use crate::model::{
-    self, Kind, MatchField, Mode, PATTERN_KEYS, Rule, RuleKind, Value, effect_kind,
-};
+use crate::docs::{self, DocsCache, PropCatalog};
+use crate::model::{self, MatchField, Mode, PATTERN_KEYS, Rule, RuleKind, Value};
 use crate::settings::{self, Settings, ThemePref};
 use crate::update::{self, InstallKind, Progress, Update};
 use crate::{hypr, luaio};
@@ -105,6 +104,11 @@ pub struct App {
     /// Existing workspaces plus any the rules mention, for the workspace drop-down.
     workspace_names: Vec<String>,
     prop_pick: Option<String>,
+    /// Built-in properties merged with the cached wiki docs.
+    catalog: PropCatalog,
+    /// Installed Hyprland release the docs cache is keyed on.
+    docs_version: String,
+    docs_busy: bool,
     /// Options of the editor's Group combo box (the other rules' groups).
     group_combo: iced::widget::combo_box::State<String>,
     search: String,
@@ -197,6 +201,11 @@ pub enum Message {
     MatchRemove(usize),
     PropPick(String),
     PropAdd,
+    DocsRefresh,
+    DocsFetched {
+        manual: bool,
+        result: Result<DocsCache, String>,
+    },
     PropKey(usize, String),
     PropValue(usize, String),
     PropRemove(usize),
@@ -303,6 +312,9 @@ impl App {
             live_workspaces: Vec::new(),
             workspace_names: Vec::new(),
             prop_pick: None,
+            catalog: PropCatalog::builtin(),
+            docs_version: hypr::version(),
+            docs_busy: false,
             group_combo: iced::widget::combo_box::State::new(Vec::new()),
             search: String::new(),
             note: String::new(),
@@ -324,7 +336,25 @@ impl App {
         };
         let (audio, audio_task) = AudioTab::new();
         app.audio = audio;
-        (app, Task::batch([task, audio_task.map(Message::Audio)]))
+        let docs_task = match docs::load(&app.docs_version) {
+            Some(cache) => {
+                app.catalog = PropCatalog::merged(Some(&cache));
+                Task::none()
+            }
+            None => app.fetch_docs(false),
+        };
+        (
+            app,
+            Task::batch([task, audio_task.map(Message::Audio), docs_task]),
+        )
+    }
+
+    /// Fetch the wiki's rule pages for the installed version in the background.
+    fn fetch_docs(&mut self, manual: bool) -> Task<Message> {
+        self.docs_busy = true;
+        Task::perform(docs::fetch(self.docs_version.clone()), move |result| {
+            Message::DocsFetched { manual, result }
+        })
     }
 
     fn title(&self) -> String {
@@ -563,12 +593,14 @@ impl App {
     }
 
     fn save_inner(&mut self, reload: bool, check: Check) -> Result<Task<Message>, ()> {
+        let mut warnings = 0;
         if matches!(check, Check::Validate) {
-            let problems = luaio::validate(&self.rules, &self.groups);
-            if !problems.is_empty() {
+            let problems = luaio::validate(&self.rules, &self.groups, &self.catalog);
+            if problems.iter().any(|p| !p.warning) {
                 self.show_problems(&problems);
                 return Ok(Task::none());
             }
+            warnings = problems.len();
         }
         if let Err(err) = self.write_file(&self.settings.rules()) {
             self.info("Save failed", err.to_string());
@@ -578,6 +610,9 @@ impl App {
         self.saved_rules = self.rules.clone();
         self.select(self.selected);
         self.note.clear();
+        if warnings > 0 {
+            self.note = "Some properties aren't in the Hyprland docs — they may be ignored".into();
+        }
         if !settings::hook_installed(&self.settings.hook(), &self.settings.rules()) {
             self.ask_install_hook();
             Ok(Task::none())
@@ -982,15 +1017,41 @@ impl App {
             }
             Message::PropPick(k) => self.prop_pick = Some(k),
             Message::PropAdd => {
-                if let Some(key) = self.prop_pick.clone() {
-                    let default = match effect_kind(&key) {
-                        Some(Kind::Bool) => "true",
-                        Some(Kind::Int) => "0",
-                        Some(Kind::Float) => "0.5",
-                        Some(Kind::Pair) => "{ \"50%\", \"50%\" }",
-                        _ => "",
-                    };
-                    self.edit(|e| e.props.push((key, default.into())));
+                // take(): a second click must not add the same property again
+                if let Some(key) = self.prop_pick.take() {
+                    if self
+                        .editor
+                        .as_ref()
+                        .is_some_and(|e| e.props.iter().any(|(k, _)| *k == key))
+                    {
+                        return Task::none();
+                    }
+                    let default = self
+                        .editor
+                        .as_ref()
+                        .and_then(|e| self.catalog.info(e.kind, &key))
+                        .map(editor::prop_default)
+                        .unwrap_or_default();
+                    self.edit(|e| e.props.push((key, default)));
+                }
+            }
+            Message::DocsRefresh => return self.fetch_docs(true),
+            Message::DocsFetched { manual, result } => {
+                self.docs_busy = false;
+                match result {
+                    Ok(cache) => {
+                        self.catalog = PropCatalog::merged(Some(&cache));
+                        self.note = format!("Property docs updated for Hyprland {}", cache.version);
+                        if let Err(err) = docs::save(&cache) {
+                            self.note = format!("Property docs updated, but not cached: {err}");
+                        }
+                    }
+                    Err(err) if manual => self.info("Property docs", err),
+                    Err(_) => {
+                        self.note =
+                            "Couldn't fetch the Hyprland docs — using the built-in property list"
+                                .into()
+                    }
                 }
             }
             Message::PropKey(i, k) => self.edit(|e| e.props[i].0 = k),
