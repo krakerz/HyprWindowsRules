@@ -23,6 +23,12 @@ Hyprland 0.55+ moved to a Lua config; window rules are `hl.window_rule({ match =
 - Set up or verify the one-click hook in your Hyprland config to load the rules file automatically.
 - Light, dark, or follow-the-system theme, switchable from the toolbar.
 - Updates itself from GitHub releases: a notice at start-up, then one click to download, install and restart.
+- Group rules; groups collapse and switch on or off together.
+- Workspace rules and layer rules next to window rules, with typed property editors and descriptions.
+- Window inspector: see which rules hit a window and the final result, with checks for overridden, overlapping and never-matching rules.
+- "Apply now" applies a rule to open windows; pick a window by focusing it.
+- Undo/redo, a history of saved versions with a diff and restore, and checks before saving.
+- Drag rules to reorder them; right-click a rule for its actions.
 - Audio routes: send a program's sound and microphone to a chosen device (e.g. chat apps to a headset's chat channel), applied live by a small WirePlumber script.
 
 ## Installation
@@ -80,9 +86,11 @@ require("hypr-rules") -- hypr-rules
 
 Because the file is loaded with `require`, Hyprland watches it and reloads by itself whenever you save. In a config without Caelestia's `home` and `maybe_create` helpers, the app writes a single self-contained line instead that does the same thing. Installing the hook also removes the old hook line from Caelestia's `~/.config/caelestia/hypr-user.lua` if one is there.
 
-**Rule priority:** Later rules win when two rules set the same property; use Move up/down to reorder them.
+**Rule priority:** Later rules win when two rules set the same property; drag rules in the list (or press Alt+Up/Down) to reorder them.
 
-**Editing by hand:** The managed file stays plain Lua and can be hand-edited as long as it remains a list of `hl.window_rule` calls; comments are not preserved when the app saves.
+**Shortcuts:** Ctrl+S save, Ctrl+N new rule, Ctrl+W new rule from a window, Ctrl+D duplicate, Delete remove, Alt+Up/Down move, Ctrl+Z undo, Ctrl+Shift+Z or Ctrl+Y redo, Ctrl+F filter, F5 refresh windows.
+
+**Editing by hand:** The managed file stays plain Lua and can be hand-edited as long as it remains a list of `hl.window_rule` / `hl.workspace_rule` / `hl.layer_rule` calls; the app keeps its own `-- @group` lines but drops other comments when it saves.
 
 **Updates:** The app checks for a new release at start-up and shows a notice in the status bar if one is available. Click to download and install automatically with a progress bar, then restart. Settings → Updates shows your current version and install method, with a "Check now" button and a "Check for updates at startup" toggle (on by default). Builds run from source (cargo run or the binary in target/) don't update themselves.
 
@@ -103,7 +111,7 @@ Only the one hook line in the file you choose (by default `~/.config/hypr/hyprla
 The hook line is gone from the "Load it from" file, e.g. because a Caelestia update replaced `~/.config/hypr/hyprland.lua`. Click the button to add it again.
 
 **Can I still edit hypr-rules.lua by hand?**
-Yes, as long as it remains a list of `hl.window_rule` calls; comments are not preserved when the app saves.
+Yes, as long as it remains a list of `hl.window_rule` / `hl.workspace_rule` / `hl.layer_rule` calls; the app keeps its own `-- @group` lines but drops other comments when it saves.
 
 **Does uninstall.sh remove the audio routing?**
 No — like your window rules, it keeps working without the app. Use Turn off in the Audio routes tab first if you want it gone.

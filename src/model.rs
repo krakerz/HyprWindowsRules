@@ -76,7 +76,7 @@ impl std::fmt::Display for Mode {
 }
 
 /// Match keys whose value is a pattern; the rest (xwayland, float, ...) take plain values.
-pub const PATTERN_KEYS: [&str; 7] = [
+pub const PATTERN_KEYS: [&str; 8] = [
     "class",
     "title",
     "initial_class",
@@ -84,8 +84,9 @@ pub const PATTERN_KEYS: [&str; 7] = [
     "tag",
     "content",
     "xdg_tag",
+    "namespace",
 ];
-const MATCH_KEYS: [&str; 15] = [
+const MATCH_KEYS: [&str; 16] = [
     "class",
     "title",
     "initial_class",
@@ -93,6 +94,7 @@ const MATCH_KEYS: [&str; 15] = [
     "tag",
     "content",
     "xdg_tag",
+    "namespace",
     "xwayland",
     "float",
     "fullscreen",
@@ -112,6 +114,7 @@ pub fn match_key_label(key: &str) -> &str {
         "tag" => "Tag",
         "content" => "Content type",
         "xdg_tag" => "XDG tag",
+        "namespace" => "Namespace",
         other => other,
     }
 }
@@ -146,73 +149,486 @@ pub enum Kind {
     Pair,
 }
 
-/// Known effects with the value type the editor offers for them.
-pub const EFFECTS: [(&str, Kind); 57] = [
-    ("float", Kind::Bool),
-    ("tile", Kind::Bool),
-    ("size", Kind::Pair),
-    ("move", Kind::Pair),
-    ("center", Kind::Bool),
-    ("workspace", Kind::Str),
-    ("monitor", Kind::Str),
-    ("pin", Kind::Bool),
-    ("fullscreen", Kind::Bool),
-    ("maximize", Kind::Bool),
-    ("pseudo", Kind::Bool),
-    ("no_initial_focus", Kind::Bool),
-    ("opacity", Kind::Str),
-    ("border_size", Kind::Int),
-    ("rounding", Kind::Int),
-    ("no_shadow", Kind::Bool),
-    ("no_blur", Kind::Bool),
-    ("no_anim", Kind::Bool),
-    ("no_dim", Kind::Bool),
-    ("no_focus", Kind::Bool),
-    ("stay_focused", Kind::Bool),
-    ("keep_aspect_ratio", Kind::Bool),
-    ("persistent_size", Kind::Bool),
-    ("no_max_size", Kind::Bool),
-    ("scrolling_width", Kind::Float),
-    ("idle_inhibit", Kind::Str),
-    ("suppress_event", Kind::Str),
-    ("render_unfocused", Kind::Bool),
-    ("immediate", Kind::Bool),
-    ("no_screen_share", Kind::Bool),
-    ("decorate", Kind::Bool),
-    ("allows_input", Kind::Bool),
-    ("opaque", Kind::Bool),
-    ("xray", Kind::Bool),
-    ("dim_around", Kind::Bool),
-    ("fullscreen_state", Kind::Str),
-    ("content", Kind::Str),
-    ("min_size", Kind::Pair),
-    ("max_size", Kind::Pair),
-    ("animation", Kind::Str),
-    ("tag", Kind::Str),
-    // Added from Hyprland 0.56's rule enum (WindowRuleEffectContainer.hpp)
-    ("group", Kind::Str),
-    ("no_close_for", Kind::Int),
-    ("rounding_power", Kind::Float),
-    ("border_color", Kind::Str),
-    ("focus_on_activate", Kind::Bool),
-    ("nearest_neighbor", Kind::Bool),
-    ("no_follow_mouse", Kind::Bool),
-    ("no_shortcuts_inhibit", Kind::Bool),
-    ("force_rgbx", Kind::Bool),
-    ("sync_fullscreen", Kind::Bool),
-    ("no_vrr", Kind::Bool),
-    ("no_auto_hdr", Kind::Bool),
-    ("tonemap", Kind::Str),
-    ("scroll_mouse", Kind::Float),
-    ("scroll_touchpad", Kind::Float),
-    ("confine_pointer", Kind::Bool),
+/// One property a rule can set: the value type the editor offers, a one-line help text
+/// and, for enum-like strings, the allowed values.
+#[derive(Debug, Clone, Copy)]
+pub struct PropInfo {
+    pub key: &'static str,
+    pub kind: Kind,
+    pub help: &'static str,
+    pub choices: &'static [&'static str],
+}
+
+const fn prop(
+    key: &'static str,
+    kind: Kind,
+    help: &'static str,
+    choices: &'static [&'static str],
+) -> PropInfo {
+    PropInfo {
+        key,
+        kind,
+        help,
+        choices,
+    }
+}
+
+/// Window-rule effects (Hyprland 0.56 rule enum).
+pub const WINDOW_PROPS: [PropInfo; 57] = [
+    prop("float", Kind::Bool, "Open the window floating", &[]),
+    prop("tile", Kind::Bool, "Force the window to tile", &[]),
+    prop(
+        "size",
+        Kind::Pair,
+        "Window size: pixels, or percent of the monitor (50%)",
+        &[],
+    ),
+    prop(
+        "move",
+        Kind::Pair,
+        "Window position: pixels, or percent of the monitor",
+        &[],
+    ),
+    prop(
+        "center",
+        Kind::Bool,
+        "Center the window on its monitor",
+        &[],
+    ),
+    prop(
+        "workspace",
+        Kind::Str,
+        "Open on a workspace: 2, name:web, special:x; add \" silent\" to not switch",
+        &[],
+    ),
+    prop("monitor", Kind::Str, "Open on a monitor (name or id)", &[]),
+    prop(
+        "pin",
+        Kind::Bool,
+        "Show the window on every workspace (floating only)",
+        &[],
+    ),
+    prop("fullscreen", Kind::Bool, "Open fullscreen", &[]),
+    prop("maximize", Kind::Bool, "Open maximized", &[]),
+    prop(
+        "pseudo",
+        Kind::Bool,
+        "Pseudotile: keep the window's own size inside its tile",
+        &[],
+    ),
+    prop(
+        "no_initial_focus",
+        Kind::Bool,
+        "Don't focus the window when it opens",
+        &[],
+    ),
+    prop(
+        "opacity",
+        Kind::Str,
+        "Opacity, e.g. 0.9 or \"0.9 0.7\" (active, inactive)",
+        &[],
+    ),
+    prop("border_size", Kind::Int, "Border width in pixels", &[]),
+    prop("rounding", Kind::Int, "Corner radius in pixels", &[]),
+    prop("no_shadow", Kind::Bool, "Disable the window shadow", &[]),
+    prop("no_blur", Kind::Bool, "Disable blur behind the window", &[]),
+    prop(
+        "no_anim",
+        Kind::Bool,
+        "Disable animations for the window",
+        &[],
+    ),
+    prop(
+        "no_dim",
+        Kind::Bool,
+        "Don't dim the window when it is unfocused",
+        &[],
+    ),
+    prop(
+        "no_focus",
+        Kind::Bool,
+        "The window can never take focus",
+        &[],
+    ),
+    prop(
+        "stay_focused",
+        Kind::Bool,
+        "Keep focus on the window while it is visible",
+        &[],
+    ),
+    prop(
+        "keep_aspect_ratio",
+        Kind::Bool,
+        "Keep the aspect ratio while resizing",
+        &[],
+    ),
+    prop(
+        "persistent_size",
+        Kind::Bool,
+        "Remember the size for next time (floating only)",
+        &[],
+    ),
+    prop(
+        "no_max_size",
+        Kind::Bool,
+        "Ignore the maximum size the app asks for",
+        &[],
+    ),
+    prop(
+        "scrolling_width",
+        Kind::Float,
+        "Column width in the scrolling layout (0 to 1)",
+        &[],
+    ),
+    prop(
+        "idle_inhibit",
+        Kind::Str,
+        "When the window prevents the screen from idling",
+        &["none", "always", "focus", "fullscreen"],
+    ),
+    prop(
+        "suppress_event",
+        Kind::Str,
+        "Ignore app requests: fullscreen, maximize, activate, activatefocus, fullscreenoutput",
+        &[],
+    ),
+    prop(
+        "render_unfocused",
+        Kind::Bool,
+        "Keep rendering the window while it isn't visible",
+        &[],
+    ),
+    prop(
+        "immediate",
+        Kind::Bool,
+        "Allow tearing (needs general.allow_tearing)",
+        &[],
+    ),
+    prop(
+        "no_screen_share",
+        Kind::Bool,
+        "Hide the window from screen sharing",
+        &[],
+    ),
+    prop(
+        "decorate",
+        Kind::Bool,
+        "Draw decorations (border, shadow, titlebar)",
+        &[],
+    ),
+    prop(
+        "allows_input",
+        Kind::Bool,
+        "Let the window receive input (for input-transparent surfaces)",
+        &[],
+    ),
+    prop(
+        "opaque",
+        Kind::Bool,
+        "Treat the window as fully opaque",
+        &[],
+    ),
+    prop(
+        "xray",
+        Kind::Bool,
+        "Blur sees through this window to the wallpaper",
+        &[],
+    ),
+    prop(
+        "dim_around",
+        Kind::Bool,
+        "Dim everything around the window (floating only)",
+        &[],
+    ),
+    prop(
+        "fullscreen_state",
+        Kind::Str,
+        "Fullscreen state as \"internal client\", e.g. \"2 0\"",
+        &[],
+    ),
+    prop(
+        "content",
+        Kind::Str,
+        "Content type reported to the compositor",
+        &["none", "photo", "video", "game"],
+    ),
+    prop(
+        "min_size",
+        Kind::Pair,
+        "Smallest size the window can have",
+        &[],
+    ),
+    prop(
+        "max_size",
+        Kind::Pair,
+        "Largest size the window can have",
+        &[],
+    ),
+    prop(
+        "animation",
+        Kind::Str,
+        "Animation style, e.g. slide, popin 80%",
+        &[],
+    ),
+    prop(
+        "tag",
+        Kind::Str,
+        "Add a tag (+name toggles on, name- off) that other rules can match",
+        &[],
+    ),
+    prop(
+        "group",
+        Kind::Str,
+        "Group behaviour: set, new, barred, deny, invade, lock, override, unset",
+        &[],
+    ),
+    prop(
+        "no_close_for",
+        Kind::Int,
+        "Ignore close requests for this many milliseconds after opening",
+        &[],
+    ),
+    prop(
+        "rounding_power",
+        Kind::Float,
+        "Corner curve; 2 is a circle, higher is squarer",
+        &[],
+    ),
+    prop(
+        "border_color",
+        Kind::Str,
+        "Border colour, e.g. rgba(33ccffee)",
+        &[],
+    ),
+    prop(
+        "focus_on_activate",
+        Kind::Bool,
+        "Focus the window when the app asks for attention",
+        &[],
+    ),
+    prop(
+        "nearest_neighbor",
+        Kind::Bool,
+        "Scale with nearest-neighbour instead of smoothing",
+        &[],
+    ),
+    prop(
+        "no_follow_mouse",
+        Kind::Bool,
+        "Hovering over the window doesn't focus it",
+        &[],
+    ),
+    prop(
+        "no_shortcuts_inhibit",
+        Kind::Bool,
+        "Don't let the app grab your shortcuts",
+        &[],
+    ),
+    prop(
+        "force_rgbx",
+        Kind::Bool,
+        "Ignore the alpha channel of the window",
+        &[],
+    ),
+    prop(
+        "sync_fullscreen",
+        Kind::Bool,
+        "Fullscreen state follows the app's own state",
+        &[],
+    ),
+    prop(
+        "no_vrr",
+        Kind::Bool,
+        "Disable variable refresh rate for this window",
+        &[],
+    ),
+    prop(
+        "no_auto_hdr",
+        Kind::Bool,
+        "Don't switch the monitor to HDR for this window",
+        &[],
+    ),
+    prop(
+        "tonemap",
+        Kind::Str,
+        "Tone mapping mode for HDR content",
+        &[],
+    ),
+    prop(
+        "scroll_mouse",
+        Kind::Float,
+        "Scroll speed multiplier for a mouse",
+        &[],
+    ),
+    prop(
+        "scroll_touchpad",
+        Kind::Float,
+        "Scroll speed multiplier for a touchpad",
+        &[],
+    ),
+    prop(
+        "confine_pointer",
+        Kind::Bool,
+        "Keep the pointer inside the window",
+        &[],
+    ),
 ];
 
+/// `HL.WorkspaceRuleSpec` keys except `enabled`.
+pub const WORKSPACE_PROPS: [PropInfo; 17] = [
+    prop(
+        "workspace",
+        Kind::Str,
+        "Which workspaces: 2, name:web, special:x, w[tv1], f[1]…",
+        &[],
+    ),
+    prop(
+        "monitor",
+        Kind::Str,
+        "Pin the workspace to a monitor (name or id)",
+        &[],
+    ),
+    prop(
+        "default",
+        Kind::Bool,
+        "Make this the monitor's default workspace",
+        &[],
+    ),
+    prop(
+        "default_name",
+        Kind::Str,
+        "Display name for the workspace",
+        &[],
+    ),
+    prop(
+        "persistent",
+        Kind::Bool,
+        "Keep the workspace alive when empty",
+        &[],
+    ),
+    prop(
+        "gaps_in",
+        Kind::Str,
+        "Gap between windows: pixels, or \"top right bottom left\"",
+        &[],
+    ),
+    prop(
+        "gaps_out",
+        Kind::Str,
+        "Gap to the screen edge: pixels, or \"top right bottom left\"",
+        &[],
+    ),
+    prop(
+        "float_gaps",
+        Kind::Str,
+        "Gap around floating windows: pixels, or \"top right bottom left\"",
+        &[],
+    ),
+    prop("border_size", Kind::Int, "Border width in pixels", &[]),
+    prop("no_border", Kind::Bool, "Remove window borders", &[]),
+    prop("no_rounding", Kind::Bool, "Remove rounded corners", &[]),
+    prop("no_shadow", Kind::Bool, "Remove window shadows", &[]),
+    prop("decorate", Kind::Bool, "Draw window decorations", &[]),
+    prop(
+        "layout",
+        Kind::Str,
+        "Layout for this workspace: dwindle, master, scrolling…",
+        &[],
+    ),
+    prop(
+        "layout_opts",
+        Kind::Str,
+        "Layout options (a table; kept as loaded)",
+        &[],
+    ),
+    prop(
+        "animation",
+        Kind::Str,
+        "Workspace animation style, e.g. slide, fade",
+        &[],
+    ),
+    prop(
+        "on_created_empty",
+        Kind::Str,
+        "Command to run when the workspace is created empty",
+        &[],
+    ),
+];
+
+/// `HL.LayerRuleSpec` keys except `enabled`, `match` and `name`.
+pub const LAYER_PROPS: [PropInfo; 10] = [
+    prop(
+        "above_lock",
+        Kind::Int,
+        "Draw above the lock screen (1 above, 2 also receives input)",
+        &[],
+    ),
+    prop(
+        "animation",
+        Kind::Str,
+        "Animation style for the layer, e.g. slide, popin, fade",
+        &[],
+    ),
+    prop("blur", Kind::Bool, "Blur behind the layer", &[]),
+    prop(
+        "blur_popups",
+        Kind::Bool,
+        "Blur behind the layer's popups too",
+        &[],
+    ),
+    prop(
+        "dim_around",
+        Kind::Bool,
+        "Dim everything around the layer",
+        &[],
+    ),
+    prop(
+        "ignore_alpha",
+        Kind::Float,
+        "Don't blur pixels below this alpha (0 to 1)",
+        &[],
+    ),
+    prop(
+        "no_anim",
+        Kind::Bool,
+        "Disable animations for the layer",
+        &[],
+    ),
+    prop(
+        "no_screen_share",
+        Kind::Bool,
+        "Hide the layer from screen sharing",
+        &[],
+    ),
+    prop(
+        "order",
+        Kind::Int,
+        "Stacking order inside its layer (higher is on top)",
+        &[],
+    ),
+    prop(
+        "xray",
+        Kind::Bool,
+        "Blur sees through this layer to the wallpaper",
+        &[],
+    ),
+];
+
+pub fn props_for(kind: RuleKind) -> &'static [PropInfo] {
+    match kind {
+        RuleKind::Window => &WINDOW_PROPS,
+        RuleKind::Workspace => &WORKSPACE_PROPS,
+        RuleKind::Layer => &LAYER_PROPS,
+    }
+}
+
+pub fn prop_info(kind: RuleKind, key: &str) -> Option<&'static PropInfo> {
+    props_for(kind).iter().find(|p| p.key == key)
+}
+
+/// Known effects with the value type the editor offers for them.
 pub fn effect_kind(key: &str) -> Option<Kind> {
-    EFFECTS
-        .iter()
-        .find(|(k, _)| *k == key)
-        .map(|(_, kind)| *kind)
+    WINDOW_PROPS.iter().find(|p| p.key == key).map(|p| p.kind)
 }
 
 const RE_META: &str = r".^$*+?()[]{}|\";
@@ -443,12 +859,65 @@ impl MatchField {
     }
 }
 
+/// Which Hyprland call a rule is written as.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum RuleKind {
+    #[default]
+    Window,
+    Workspace,
+    Layer,
+}
+
+impl RuleKind {
+    pub const ALL: [RuleKind; 3] = [RuleKind::Window, RuleKind::Workspace, RuleKind::Layer];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            RuleKind::Window => "Windows",
+            RuleKind::Workspace => "Workspaces",
+            RuleKind::Layer => "Layers",
+        }
+    }
+
+    /// Effects in the order a file read puts them (workspace selector first, then A-Z).
+    fn order_effects(self, effects: Vec<(String, Value)>) -> Vec<(String, Value)> {
+        match self {
+            RuleKind::Window | RuleKind::Layer => ordered(effects, &EFFECT_ORDER),
+            RuleKind::Workspace => ordered(effects, &["workspace"]),
+        }
+    }
+
+    pub fn lua_fn(self) -> &'static str {
+        match self {
+            RuleKind::Window => "window_rule",
+            RuleKind::Workspace => "workspace_rule",
+            RuleKind::Layer => "layer_rule",
+        }
+    }
+}
+
+impl std::fmt::Display for RuleKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.label())
+    }
+}
+
+/// A named set of rules that is collapsed and switched on or off together.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Group {
+    pub name: String,
+    pub enabled: bool,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct Rule {
     pub name: String,
     pub enabled: bool,
     pub matches: Vec<MatchField>,
     pub effects: Vec<(String, Value)>,
+    pub kind: RuleKind,
+    /// Group name; "" = ungrouped. Lives in comment markers, never in the spec.
+    pub group: String,
 }
 
 impl Default for Rule {
@@ -458,13 +927,18 @@ impl Default for Rule {
             enabled: true,
             matches: Vec::new(),
             effects: Vec::new(),
+            kind: RuleKind::Window,
+            group: String::new(),
         }
     }
 }
 
 impl Rule {
-    pub fn from_spec(spec: Vec<(String, Value)>) -> Self {
-        let mut rule = Rule::default();
+    pub fn from_spec(kind: RuleKind, spec: Vec<(String, Value)>) -> Self {
+        let mut rule = Rule {
+            kind,
+            ..Rule::default()
+        };
         let mut rest = Vec::new();
         for (k, v) in spec {
             match k.as_str() {
@@ -490,12 +964,20 @@ impl Rule {
                 _ => rest.push((k, v)),
             }
         }
-        rule.effects = ordered(rest, &EFFECT_ORDER);
+        rule.effects = rule.kind.order_effects(rest);
         rule
     }
 
     pub fn to_spec(&self) -> Vec<(String, Value)> {
         let mut spec = Vec::new();
+        if self.kind == RuleKind::Workspace {
+            // The selector comes first; WorkspaceRuleSpec has no name or match.
+            if !self.enabled {
+                spec.push(("enabled".into(), Value::Bool(false)));
+            }
+            spec.extend(ordered(self.effects.clone(), &["workspace"]));
+            return spec;
+        }
         if !self.name.is_empty() {
             spec.push(("name".into(), Value::Str(self.name.clone())));
         }
@@ -548,6 +1030,11 @@ impl Rule {
     pub fn title(&self) -> String {
         if !self.name.is_empty() {
             self.name.clone()
+        } else if self.kind == RuleKind::Workspace {
+            match self.effect("workspace").map(Value::plain) {
+                Some(sel) if !sel.is_empty() => format!("Workspace {sel}"),
+                _ => "(new rule)".into(),
+            }
         } else if !self.matches.is_empty() {
             self.matches
                 .iter()
@@ -577,6 +1064,11 @@ impl Rule {
     }
 
     pub fn has_condition(&self) -> bool {
+        if self.kind == RuleKind::Workspace {
+            return self
+                .effect("workspace")
+                .is_some_and(|v| !v.plain().is_empty());
+        }
         self.matches
             .iter()
             .any(|m| m.is_pattern() && (!m.text.is_empty() || m.raw.is_some()))
@@ -584,6 +1076,9 @@ impl Rule {
 
     /// Approximate Hyprland's matching against a `hyprctl clients -j` entry.
     pub fn matches_window(&self, client: &Json) -> bool {
+        if self.kind != RuleKind::Window {
+            return false;
+        }
         if !self.matches.iter().any(MatchField::is_pattern) {
             return false;
         }
@@ -700,16 +1195,20 @@ fn ordered(mut items: Vec<(String, Value)>, order: &[&str]) -> Vec<(String, Valu
 
 /// Make non-empty rule names unique so each rule stays identifiable in Hyprland.
 pub fn unique_names(rules: &mut [Rule]) {
-    let mut seen: std::collections::HashMap<String, u32> = Default::default();
+    use std::collections::HashSet;
+    let original: HashSet<String> = rules.iter().map(|r| r.name.clone()).collect();
+    let mut taken: HashSet<String> = HashSet::new();
     for r in rules.iter_mut() {
-        if r.name.is_empty() {
+        if r.name.is_empty() || taken.insert(r.name.clone()) {
             continue;
         }
-        let count = seen.entry(r.name.clone()).or_insert(0);
-        *count += 1;
-        if *count > 1 {
-            r.name = format!("{} ({})", r.name, count);
-        }
+        // Skip suffixes another rule already uses (one really called "x (2)")
+        let name = (2..)
+            .map(|n| format!("{} ({n})", r.name))
+            .find(|n| !taken.contains(n) && !original.contains(n))
+            .unwrap();
+        taken.insert(name.clone());
+        r.name = name;
     }
 }
 
@@ -771,7 +1270,7 @@ mod tests {
                 Value::Str("(?:Extracting.*)|(?:Copy.*)".into())
             )
         );
-        let back = Rule::from_spec(spec);
+        let back = Rule::from_spec(RuleKind::Window, spec);
         assert_eq!(back.matches.len(), 3);
         assert_eq!(
             (back.matches[2].mode, back.matches[2].text.as_str()),
@@ -787,5 +1286,64 @@ mod tests {
             vec!["a(b)c", "(?i)d"]
         );
         assert_eq!(split_alternatives("a|b"), vec!["a|b"]);
+    }
+
+    #[test]
+    fn names_end_up_unique() {
+        let named = |n: &str| Rule {
+            name: n.into(),
+            ..Default::default()
+        };
+        let mut rules = vec![named("x"), named("x"), named("x (2)"), named(""), named("")];
+        unique_names(&mut rules);
+        let names: Vec<_> = rules.iter().map(|r| r.name.as_str()).collect();
+        assert_eq!(names, ["x", "x (3)", "x (2)", "", ""]);
+    }
+
+    #[test]
+    fn prop_tables_are_documented() {
+        for kind in RuleKind::ALL {
+            assert!(props_for(kind).iter().all(|p| !p.help.is_empty()));
+        }
+        assert_eq!(
+            prop_info(RuleKind::Window, "idle_inhibit")
+                .unwrap()
+                .choices
+                .len(),
+            4
+        );
+        assert!(prop_info(RuleKind::Layer, "float").is_none());
+    }
+
+    #[test]
+    fn workspace_spec_round_trips() {
+        let spec = vec![
+            ("workspace".to_string(), Value::Str("w[tv1]".into())),
+            ("gaps_out".to_string(), Value::Int(0)),
+        ];
+        let rule = Rule::from_spec(RuleKind::Workspace, spec.clone());
+        assert_eq!(rule.kind, RuleKind::Workspace);
+        assert_eq!(rule.effects, spec);
+        assert!(rule.matches.is_empty());
+        assert_eq!(rule.to_spec(), spec);
+        assert_eq!(rule.title(), "Workspace w[tv1]");
+        assert!(rule.has_condition());
+        assert!(!Rule::from_spec(RuleKind::Workspace, vec![]).has_condition());
+    }
+
+    #[test]
+    fn layer_spec_round_trips() {
+        let spec = vec![
+            (
+                "match".to_string(),
+                Value::Map(vec![("namespace".into(), Value::Str("^(waybar)$".into()))]),
+            ),
+            ("blur".to_string(), Value::Bool(true)),
+        ];
+        let rule = Rule::from_spec(RuleKind::Layer, spec.clone());
+        assert_eq!(rule.matches[0].key, "namespace");
+        assert!(rule.has_condition());
+        assert_eq!(rule.to_spec(), spec);
+        assert!(!rule.matches_window(&serde_json::json!({"namespace": "waybar"})));
     }
 }

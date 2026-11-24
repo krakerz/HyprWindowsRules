@@ -6,7 +6,12 @@ use iced::widget::{
     Column, button, center, checkbox, column, container, pick_list, row, scrollable, space, text,
     text_input,
 };
-use iced::{Element, Fill, Font, Task};
+use iced::{Element, Fill, Task};
+
+use crate::app::style::{
+    CONTROL_H, GAP, LABEL_W, LIST_W, PAD, ROW_H, SECTION_GAP, SIDE_W, TEXT, TEXT_SMALL, U, action,
+    divider_v, form_row, section, selected_subtitle, single_line, tool_button,
+};
 
 use crate::audio::{self, Device, DeviceInfo, Route, Snapshot, Status};
 
@@ -214,6 +219,7 @@ impl AudioTab {
                 self.note = match audio::save_routes(&self.routes).and_then(|_| audio::uninstall())
                 {
                     Ok(()) => {
+                        self.dirty = false;
                         "Audio routing is off. Your routes are kept — Turn on to use them again."
                             .into()
                     }
@@ -242,51 +248,42 @@ impl AudioTab {
     // ---- view ---------------------------------------------------------------------
 
     pub fn toolbar(&self) -> Element<'_, Msg> {
-        let tool = |label: &'static str, msg: Option<Msg>| {
-            button(text(label).size(14))
-                .on_press_maybe(msg)
-                .style(button::secondary)
-        };
         row![
-            tool("Add route", Some(Msg::Add)),
-            tool("Delete", self.selected.map(|_| Msg::Delete)),
-            space().width(12),
-            tool("Refresh devices", Some(Msg::Refresh)),
+            btn("Add route", Some(Msg::Add)),
+            btn("Delete", self.selected.map(|_| Msg::Delete)),
+            divider_v(),
+            btn("Refresh devices", Some(Msg::Refresh)),
         ]
-        .spacing(6)
+        .spacing(GAP)
+        .align_y(iced::Center)
         .into()
     }
 
     pub fn view(&self) -> Element<'_, Msg> {
         column![
             self.banner(),
-            row![container(self.view_list()).width(380), self.view_editor()]
-                .spacing(8)
-                .height(Fill)
+            row![
+                container(self.view_list()).width(LIST_W),
+                self.view_editor()
+            ]
+            .spacing(SECTION_GAP)
+            .height(Fill)
         ]
-        .spacing(8)
+        .spacing(SECTION_GAP)
         .into()
     }
 
     fn banner(&self) -> Element<'_, Msg> {
-        let small = |s: &str| text(s.to_string()).size(13);
-        let mut r = row![].spacing(8).align_y(iced::Center);
+        let small = |s: &str| text(s.to_string()).size(TEXT);
+        let mut r = row![].spacing(GAP).align_y(iced::Center);
         if self.confirm_restart {
             r = r
                 .push(
                     small("Restarting WirePlumber interrupts all audio for about a second.")
                         .width(Fill),
                 )
-                .push(
-                    button(text("Restart").size(13))
-                        .on_press(Msg::RestartConfirmed)
-                        .style(button::danger),
-                )
-                .push(
-                    button(text("Cancel").size(13))
-                        .on_press(Msg::CancelRestart)
-                        .style(button::secondary),
-                );
+                .push(btn("Restart", Some(Msg::RestartConfirmed)).style(button::danger))
+                .push(btn("Cancel", Some(Msg::CancelRestart)));
         } else {
             let (msg, action): (&str, Option<(&str, Msg)>) = match self.status {
                 Status::NotInstalled => (
@@ -308,46 +305,55 @@ impl AudioTab {
             };
             r = r.push(small(msg).width(Fill));
             if let Some((label, m)) = action {
-                r = r.push(
-                    button(text(label).size(13))
-                        .on_press(m)
-                        .style(button::secondary),
-                );
+                r = r.push(btn(label, Some(m)));
             }
         }
-        let mut col = column![r].spacing(4);
+        let mut col = column![r].spacing(GAP);
         if !self.note.is_empty() {
-            col = col.push(text(self.note.as_str()).size(13).style(text::secondary));
+            col = col.push(
+                text(self.note.as_str())
+                    .size(TEXT_SMALL)
+                    .style(text::secondary),
+            );
         }
         container(col)
-            .padding(10)
+            .padding(PAD)
             .width(Fill)
             .style(container::bordered_box)
             .into()
     }
 
     fn view_list(&self) -> Element<'_, Msg> {
-        let mut items = Column::new().spacing(2);
+        let mut items = Column::new().spacing(U / 2.0);
         for (i, r) in self.routes.iter().enumerate() {
             let off = if r.enabled { "" } else { "   (off)" };
-            let label = column![
-                text(format!("{}{off}", r.title())).size(14),
-                text(r.summary()).size(12).style(text::secondary),
-            ]
-            .spacing(2);
-            let style = if self.selected == Some(i) {
-                button::primary
+            let selected = self.selected == Some(i);
+            let sub = single_line(r.summary(), TEXT_SMALL);
+            let sub = if selected {
+                sub.style(selected_subtitle)
             } else {
-                button::text
+                sub.style(text::secondary)
             };
+            let label = container(
+                column![single_line(format!("{}{off}", r.title()), TEXT), sub].width(Fill),
+            )
+            .width(Fill)
+            .center_y(Fill)
+            .clip(true);
             items = items.push(
                 button(label)
                     .width(Fill)
+                    .height(ROW_H)
+                    .padding([0.0, PAD])
                     .on_press(Msg::Select(i))
-                    .style(style),
+                    .style(if selected {
+                        button::primary
+                    } else {
+                        button::text
+                    }),
             );
         }
-        scrollable(items.padding(iced::Padding::ZERO.right(12)))
+        scrollable(items.padding(iced::Padding::ZERO.right(PAD)))
             .height(Fill)
             .into()
     }
@@ -356,18 +362,28 @@ impl AudioTab {
         let Some(route) = self.selected.and_then(|i| self.routes.get(i)) else {
             return center(
                 text("Add a route to send a program's sound to a specific device.")
+                    .size(TEXT)
                     .style(text::secondary),
             )
             .into();
         };
-        let label = |s: &'static str| text(s).width(110);
+        // Help text sits in the control column, like in the rule editor
+        let help = |s: &'static str, style: fn(&iced::Theme) -> text::Style| {
+            row![
+                space().width(LABEL_W),
+                text(s).size(TEXT_SMALL).style(style).width(Fill)
+            ]
+            .spacing(GAP)
+        };
 
-        let mut programs = row![].spacing(6).align_y(iced::Center);
+        let mut programs = row![].spacing(GAP).align_y(iced::Center);
         for (i, p) in route.programs.iter().enumerate() {
             programs = programs.push(
-                button(text(format!("{p}  ✕")).size(13))
+                button(container(single_line(format!("{p}  ✕"), TEXT_SMALL)).center_y(Fill))
+                    .height(CHIP_H)
+                    .padding([0.0, PAD])
                     .on_press(Msg::RemoveProgram(i))
-                    .style(button::secondary),
+                    .style(chip),
             );
         }
         let available: Vec<String> = self
@@ -401,22 +417,20 @@ impl AudioTab {
             {
                 hw_names.push(name);
             }
-            let mut col = column![
-                row![
-                    label(title),
-                    pick_list(options, selected, on_pick)
-                        .placeholder(
-                            current
-                                .as_ref()
-                                .map(|d| format!("{} (not connected)", d.label()))
-                                .unwrap_or_default()
-                        )
-                        .width(360),
-                ]
-                .spacing(8)
-                .align_y(iced::Center)
-            ]
-            .spacing(6);
+            let mut col = column![form_row(
+                title,
+                pick_list(options, selected, on_pick)
+                    .placeholder(
+                        current
+                            .as_ref()
+                            .map(|d| format!("{} (not connected)", d.label()))
+                            .unwrap_or_default()
+                    )
+                    .text_size(TEXT)
+                    .padding(control_pad())
+                    .width(Fill),
+            )]
+            .spacing(GAP);
             if let Some(dev) = current {
                 let connected = devices
                     .iter()
@@ -424,98 +438,140 @@ impl AudioTab {
                 if !connected {
                     col = col.push(
                         row![
-                            space().width(110),
+                            space().width(LABEL_W),
                             text(format!(
                                 "{} isn't connected — these programs use the default device until it's back, then move to it automatically.",
                                 dev.label()
                             ))
-                            .size(13)
-                            .style(text::warning),
+                            .size(TEXT_SMALL)
+                            .style(text::warning)
+                            .width(Fill),
                         ]
-                        .spacing(8),
+                        .spacing(GAP),
                     );
                 }
-                col = col.push(
+                col = col.push(form_row(
+                    "Device name",
                     row![
-                        text("Device name").size(13).width(110),
                         pick_list(hw_names, None::<String>, on_pattern)
-                            .placeholder("Pick a hardware name…")
-                            .text_size(13)
-                            .width(260),
+                            .placeholder("Hardware name…")
+                            .text_size(TEXT)
+                            .padding(control_pad())
+                            .width(SIDE_W),
                         text_input(
                             "optional, e.g. alsa_output.usb-Brand_*-01.pro-output-0",
                             dev.pattern.as_deref().unwrap_or("")
                         )
                         .on_input(on_pattern)
-                        .size(13)
+                        .size(TEXT)
+                        .padding(control_pad())
                         .width(Fill),
                     ]
-                    .spacing(8)
-                    .align_y(iced::Center),
-                );
+                    .spacing(GAP),
+                ));
             }
             col
         };
 
         let body = column![
-            row![label("Name"), text_input("e.g. Chat apps", &route.name).on_input(Msg::Name)]
-                .spacing(8)
-                .align_y(iced::Center),
-            row![space().width(110), checkbox(route.enabled).label("Route is active").on_toggle(Msg::Enabled)].spacing(8),
-            heading("Programs"),
-            container(
+            section(
+                "Route",
                 column![
-                    if route.programs.is_empty() {
-                        Element::from(text("No programs yet — add the ones this route applies to.").size(13).style(text::secondary))
-                    } else {
-                        programs.wrap().into()
-                    },
+                    form_row(
+                        "Name",
+                        text_input("e.g. Chat apps", &route.name)
+                            .on_input(Msg::Name)
+                            .size(TEXT)
+                            .padding(control_pad())
+                    ),
                     row![
-                        pick_list(available, None::<String>, Msg::PickProgram)
-                            .placeholder("Playing or recording now…")
-                            .width(260),
-                        text_input("or type a program name, e.g. Discord", &self.program_input)
-                            .on_input(Msg::ProgramInput)
-                            .on_submit(Msg::AddProgram)
-                            .width(Fill),
-                        button(text("Add").size(14)).on_press(Msg::AddProgram).style(button::secondary),
+                        space().width(LABEL_W),
+                        checkbox(route.enabled)
+                            .label("Route is active")
+                            .text_size(TEXT)
+                            .on_toggle(Msg::Enabled)
                     ]
-                    .spacing(6),
-                    text("Matches the program's executable name, however it connects to audio (PulseAudio or ALSA).")
-                        .size(13)
-                        .style(text::secondary),
+                    .spacing(GAP),
                 ]
-                .spacing(8),
-            )
-            .padding(12)
-            .width(Fill)
-            .style(container::bordered_box),
-            heading("Devices"),
-            container(
+                .spacing(GAP),
+            ),
+            section(
+                "Programs",
+                column![
+                    form_row(
+                        "Programs",
+                        if route.programs.is_empty() {
+                            Element::from(
+                                text("No programs yet — add the ones this route applies to.")
+                                    .size(TEXT_SMALL)
+                                    .style(text::secondary),
+                            )
+                        } else {
+                            programs.wrap().vertical_spacing(GAP).into()
+                        }
+                    ),
+                    form_row(
+                        "Add program",
+                        row![
+                            pick_list(available, None::<String>, Msg::PickProgram)
+                                .placeholder("Playing now…")
+                                .text_size(TEXT)
+                                .padding(control_pad())
+                                .width(SIDE_W),
+                            text_input("or type a program name, e.g. Discord", &self.program_input)
+                                .on_input(Msg::ProgramInput)
+                                .on_submit(Msg::AddProgram)
+                                .size(TEXT)
+                                .padding(control_pad())
+                                .width(Fill),
+                            btn("Add", Some(Msg::AddProgram)),
+                        ]
+                        .spacing(GAP)
+                    ),
+                    help(
+                        "Matches the program's executable name, however it connects to audio (PulseAudio or ALSA).",
+                        text::secondary
+                    ),
+                ]
+                .spacing(GAP),
+            ),
+            section(
+                "Devices",
                 column![
                     device_row("Output", &self.snap.outputs, &route.output, Msg::Output, Msg::OutputPattern),
                     device_row("Input", &self.snap.inputs, &route.input, Msg::Input, Msg::InputPattern),
-                    text("A device matches by its name as shown here, or by its hardware name. Pick a hardware name, then replace the part that changes with * if the device's name differs between connection modes (e.g. dongle vs USB). When it's unplugged the program uses the default device, and moves back when it returns.")
-                        .size(13)
-                        .style(text::secondary),
+                    help(
+                        "A device matches by its name as shown here, or by its hardware name. Pick a hardware name, then replace the part that changes with * if the device's name differs between connection modes (e.g. dongle vs USB). When it's unplugged the program uses the default device, and moves back when it returns.",
+                        text::secondary
+                    ),
                 ]
-                .spacing(10),
-            )
-            .padding(12)
-            .width(Fill)
-            .style(container::bordered_box),
+                .spacing(GAP),
+            ),
         ]
-        .spacing(12)
-        .padding(iced::Padding::ZERO.right(16).bottom(16));
+        .spacing(SECTION_GAP)
+        .padding(iced::Padding::ZERO.right(PAD).bottom(PAD));
         scrollable(body).height(Fill).into()
     }
 }
 
-fn heading(s: &str) -> iced::widget::Text<'_> {
-    text(s).size(15).font(Font {
-        weight: iced::font::Weight::Bold,
-        ..Font::DEFAULT
-    })
+/// Height of the program chips; their corners are fully round.
+const CHIP_H: f32 = 24.0;
+
+/// Vertical padding that makes a text input / pick list exactly CONTROL_H tall.
+fn control_pad() -> iced::Padding {
+    // iced's default line height is 1.3 × the text size
+    iced::Padding::from([(CONTROL_H - TEXT * 1.3) / 2.0, PAD])
+}
+
+/// Toolbar / banner button: CONTROL_H tall, label centred, secondary style.
+fn btn<'a>(label: &'a str, msg: Option<Msg>) -> iced::widget::Button<'a, Msg> {
+    tool_button(label).on_press_maybe(msg)
+}
+
+fn chip(theme: &iced::Theme, status: button::Status) -> button::Style {
+    let mut style = action(theme, status);
+    style.border.radius = (CHIP_H / 2.0).into();
+    style
 }
 
 fn device_from(d: DeviceInfo) -> Device {
