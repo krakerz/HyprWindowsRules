@@ -140,7 +140,8 @@ const EFFECT_ORDER: [&str; 17] = [
     "scrolling_width",
 ];
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum Kind {
     Bool,
     Int,
@@ -150,13 +151,14 @@ pub enum Kind {
 }
 
 /// One property a rule can set: the value type the editor offers, a one-line help text
-/// and, for enum-like strings, the allowed values.
+/// and, for enum-like strings, the allowed values (`multi`: several of them, space-separated).
 #[derive(Debug, Clone, Copy)]
 pub struct PropInfo {
     pub key: &'static str,
     pub kind: Kind,
     pub help: &'static str,
     pub choices: &'static [&'static str],
+    pub multi: bool,
 }
 
 const fn prop(
@@ -170,6 +172,18 @@ const fn prop(
         kind,
         help,
         choices,
+        multi: false,
+    }
+}
+
+const fn multi_prop(
+    key: &'static str,
+    help: &'static str,
+    choices: &'static [&'static str],
+) -> PropInfo {
+    PropInfo {
+        multi: true,
+        ..prop(key, Kind::Str, help, choices)
     }
 }
 
@@ -286,11 +300,17 @@ pub const WINDOW_PROPS: [PropInfo; 57] = [
         "When the window prevents the screen from idling",
         &["none", "always", "focus", "fullscreen"],
     ),
-    prop(
+    multi_prop(
         "suppress_event",
-        Kind::Str,
-        "Ignore app requests: fullscreen, maximize, activate, activatefocus, fullscreenoutput",
-        &[],
+        "Ignore these app requests",
+        &[
+            "fullscreen",
+            "maximize",
+            "activate",
+            "activatefocus",
+            "fullscreenoutput",
+            "x11configurerequest",
+        ],
     ),
     prop(
         "render_unfocused",
@@ -452,7 +472,7 @@ pub const WINDOW_PROPS: [PropInfo; 57] = [
         "tonemap",
         Kind::Str,
         "Tone mapping mode for HDR content",
-        &[],
+        &["on", "off", "clamp", "limited"],
     ),
     prop(
         "scroll_mouse",
@@ -620,15 +640,6 @@ pub fn props_for(kind: RuleKind) -> &'static [PropInfo] {
         RuleKind::Workspace => &WORKSPACE_PROPS,
         RuleKind::Layer => &LAYER_PROPS,
     }
-}
-
-pub fn prop_info(kind: RuleKind, key: &str) -> Option<&'static PropInfo> {
-    props_for(kind).iter().find(|p| p.key == key)
-}
-
-/// Known effects with the value type the editor offers for them.
-pub fn effect_kind(key: &str) -> Option<Kind> {
-    WINDOW_PROPS.iter().find(|p| p.key == key).map(|p| p.kind)
 }
 
 const RE_META: &str = r".^$*+?()[]{}|\";
@@ -1305,14 +1316,16 @@ mod tests {
         for kind in RuleKind::ALL {
             assert!(props_for(kind).iter().all(|p| !p.help.is_empty()));
         }
+        let find = |kind, key| props_for(kind).iter().find(|p| p.key == key);
         assert_eq!(
-            prop_info(RuleKind::Window, "idle_inhibit")
+            find(RuleKind::Window, "idle_inhibit")
                 .unwrap()
                 .choices
                 .len(),
             4
         );
-        assert!(prop_info(RuleKind::Layer, "float").is_none());
+        assert!(find(RuleKind::Window, "suppress_event").unwrap().multi);
+        assert!(find(RuleKind::Layer, "float").is_none());
     }
 
     #[test]

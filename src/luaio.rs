@@ -8,7 +8,8 @@ use std::time::{Duration, Instant};
 
 use mlua::{HookTriggers, Lua, VmState};
 
-use crate::model::{self, Group, Rule, RuleKind, Value};
+use crate::docs::PropCatalog;
+use crate::model::{Group, Rule, RuleKind, Value};
 
 // Runs the target file with a fake `hl` that records hl.window_rule(), hl.workspace_rule() and hl.layer_rule() calls and turns every
 // other hl.* access into a harmless no-op, so arbitrary Hyprland configs evaluate cleanly.
@@ -496,15 +497,18 @@ pub fn parse_groups(src: &str, rules: &mut [Rule]) -> Vec<Group> {
 pub struct Problem {
     pub rule: Option<usize>,
     pub message: String,
+    /// Worth a mention, but saving doesn't need confirming.
+    pub warning: bool,
 }
 
 /// Render the rules, read the text back with the import stub and report whatever
 /// Hyprland would reject, drop or read differently.
-pub fn validate(rules: &[Rule], groups: &[Group]) -> Vec<Problem> {
+pub fn validate(rules: &[Rule], groups: &[Group], catalog: &PropCatalog) -> Vec<Problem> {
     let mut problems = Vec::new();
     let whole = |message: String| Problem {
         rule: None,
         message,
+        warning: false,
     };
     let src = render_rules(rules, groups);
     // The counter keeps concurrent checks (tests, say) off each other's file
@@ -532,6 +536,7 @@ pub fn validate(rules: &[Rule], groups: &[Group]) -> Vec<Problem> {
                                 i + 1,
                                 rule.title()
                             ),
+                            warning: false,
                         });
                     }
                 }
@@ -546,17 +551,25 @@ pub fn validate(rules: &[Rule], groups: &[Group]) -> Vec<Problem> {
     }
     for (i, rule) in rules.iter().enumerate() {
         for (key, _) in &rule.effects {
-            if model::prop_info(rule.kind, key).is_none() {
-                problems.push(Problem {
+            match catalog.info(rule.kind, key) {
+                None => problems.push(Problem {
                     rule: Some(i),
                     message: format!("“{}”: unknown property `{key}`", rule.title()),
-                });
+                    warning: false,
+                }),
+                Some(p) if p.removed => problems.push(Problem {
+                    rule: Some(i),
+                    message: format!("“{}”: `{key}`: {}", rule.title(), catalog.removed_note()),
+                    warning: true,
+                }),
+                Some(_) => {}
             }
         }
         if !rule.has_condition() {
             problems.push(Problem {
                 rule: Some(i),
                 message: format!("“{}”: matches nothing", rule.title()),
+                warning: false,
             });
         }
     }
@@ -971,7 +984,7 @@ mod tests {
         };
         assert_eq!(key(&back.rules), key(&rules));
         // Markers are only comments: evaluating without them yields the same rule count
-        assert!(validate(&rules, &groups).is_empty());
+        assert!(validate(&rules, &groups, &PropCatalog::builtin()).is_empty());
         fs::remove_dir_all(&dir).unwrap();
     }
 
@@ -986,11 +999,11 @@ mod tests {
     #[test]
     fn validate_flags_problems() {
         let clean = vec![window("a", "kitty", ""), workspace("2"), layer()];
-        assert!(validate(&clean, &[]).is_empty());
+        assert!(validate(&clean, &[], &PropCatalog::builtin()).is_empty());
         let mut bad = clean.clone();
         bad[0].effects.push(("flaot".into(), Value::Bool(true)));
         bad[1].effects.retain(|(k, _)| k != "workspace");
-        let problems = validate(&bad, &[]);
+        let problems = validate(&bad, &[], &PropCatalog::builtin());
         assert!(
             problems
                 .iter()
@@ -1002,6 +1015,44 @@ mod tests {
                 .any(|p| p.rule == Some(1) && p.message.contains("matches nothing"))
         );
         assert!(!problems.iter().any(|p| p.rule == Some(2)));
+    }
+
+    #[test]
+    fn validate_warns_about_properties_gone_from_the_docs() {
+        use crate::docs::{DocsCache, WikiProp};
+        let wiki = crate::model::props_for(RuleKind::Window)
+            .iter()
+            .filter(|p| p.key != "tonemap")
+            .map(|p| WikiProp {
+                key: p.key.into(),
+                kind: p.kind,
+                help: String::new(),
+                choices: vec![],
+                multi: false,
+            })
+            .collect();
+        let cache = DocsCache {
+            version: "9.9.9".into(),
+            fetched_at: String::new(),
+            source: String::new(),
+            window: wiki,
+            workspace: vec![],
+            layer: vec![],
+        };
+        let mut rules = vec![window("a", "kitty", "")];
+        rules[0]
+            .effects
+            .push(("tonemap".into(), Value::Str("on".into())));
+        let problems = validate(&rules, &[], &PropCatalog::merged(Some(&cache)));
+        assert_eq!(problems.len(), 1, "{problems:?}");
+        assert!(problems[0].warning);
+        assert!(
+            problems[0]
+                .message
+                .contains("Not in the Hyprland 9.9.9 docs")
+        );
+        // Offline (no docs) it is a known property
+        assert!(validate(&rules, &[], &PropCatalog::builtin()).is_empty());
     }
 
     #[test]

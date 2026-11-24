@@ -2,6 +2,7 @@ mod app;
 mod audio;
 mod audio_ui;
 mod diff;
+mod docs;
 mod hypr;
 mod inspect;
 mod luaio;

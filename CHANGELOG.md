@@ -14,6 +14,7 @@
 - Rule groups that collapse and switch on or off together.
 - Workspace rules and layer rules.
 - Typed property editors with descriptions, and a warning for unknown properties.
+- Properties with fixed values offer them in a drop-down, kept up to date from the Hyprland wiki for the installed version.
 - Match-count badge on each rule.
 - Rules are checked before saving.
 - Ctrl+F jumps to the filter.

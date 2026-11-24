@@ -30,6 +30,30 @@ fn json(args: &[&str]) -> Result<Vec<Json>, String> {
     serde_json::from_str(&hyprctl(args)?).map_err(|e| format!("unexpected hyprctl output: {e}"))
 }
 
+/// The installed Hyprland release without a leading `v` (`hyprctl version -j`, else
+/// `Hyprland --version`), or "unknown".
+pub fn version() -> String {
+    let from_ctl = hyprctl(&["version", "-j"])
+        .ok()
+        .and_then(|out| serde_json::from_str::<Json>(&out).ok())
+        .and_then(|j| j.get("tag").and_then(Json::as_str).map(str::to_string));
+    let tag = from_ctl.or_else(|| {
+        let out = Command::new("Hyprland").arg("--version").output().ok()?;
+        parse_version_line(String::from_utf8_lossy(&out.stdout).lines().next()?)
+    });
+    tag.map(|t| t.trim().trim_start_matches('v').to_string())
+        .filter(|t| !t.is_empty())
+        .unwrap_or_else(|| "unknown".into())
+}
+
+/// "Hyprland 0.57.2 built from branch …" → "0.57.2".
+fn parse_version_line(line: &str) -> Option<String> {
+    let mut words = line.split_whitespace();
+    (words.next()? == "Hyprland")
+        .then(|| words.next().map(str::to_string))
+        .flatten()
+}
+
 /// Mapped windows, from `hyprctl clients -j`.
 pub fn clients() -> Result<Vec<Json>, String> {
     Ok(json(&["clients", "-j"])?
@@ -138,5 +162,20 @@ pub fn relative_position(c: &Json, monitors: &[Json]) -> (i64, i64) {
             y - m.get("y").and_then(Json::as_i64).unwrap_or(0),
         ),
         None => (x, y),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn reads_the_version_from_the_banner() {
+        assert_eq!(
+            parse_version_line("Hyprland 0.57.2 built from branch v0.57.2 at commit 11cb"),
+            Some("0.57.2".into())
+        );
+        assert_eq!(parse_version_line("something else 1.0"), None);
+        assert_eq!(parse_version_line(""), None);
     }
 }

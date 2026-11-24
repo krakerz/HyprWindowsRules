@@ -3,7 +3,7 @@
 use std::borrow::Borrow;
 
 use iced::widget::{
-    Button, Column, PickList, Text, TextInput, button, center, checkbox, column, combo_box,
+    Button, Column, PickList, Row, Text, TextInput, button, center, checkbox, column, combo_box,
     container, pick_list, responsive, row, scrollable, space, text, text_input, toggler, tooltip,
 };
 use iced::{Element, Fill, Length, Pixels};
@@ -14,6 +14,7 @@ use super::style::{
     form_row, section, single_line,
 };
 use super::{App, COMMON_KEYS, Geometry, Message, inspect};
+use crate::docs::{PropCatalog, PropEntry};
 use crate::inspect::FindingKind;
 use crate::model::{self, Kind, Mode, PATTERN_KEYS, Rule, RuleKind, Value};
 use crate::{hypr, luaio};
@@ -510,7 +511,10 @@ impl App {
             RuleKind::Workspace => "Workspace rule",
         };
         if ed.kind == RuleKind::Workspace {
-            let info = model::prop_info(RuleKind::Workspace, "workspace").map_or("", |p| p.help);
+            let info = self
+                .catalog
+                .info(RuleKind::Workspace, "workspace")
+                .map_or("", |p| p.help.as_str());
             card = card
                 .push(field(
                     narrow,
@@ -781,17 +785,19 @@ impl App {
     fn other_section<'a>(&'a self, ed: &'a Editor, narrow: bool) -> Element<'a, Message> {
         let mut props = Column::new().spacing(GAP);
         for (i, (k, v)) in ed.props.iter().enumerate() {
-            props = props.push(prop_row(ed.kind, i, k, v, narrow));
+            props = props.push(prop_row(&self.catalog, ed.kind, i, k, v, narrow));
         }
-        let mut options: Vec<String> = model::props_for(ed.kind)
+        let mut options: Vec<String> = self
+            .catalog
+            .props(ed.kind)
             .iter()
-            .map(|p| p.key)
-            .filter(|k| {
-                let common = ed.kind == RuleKind::Window && COMMON_KEYS.contains(k);
-                let selector = ed.kind == RuleKind::Workspace && *k == "workspace";
-                !common && !selector && !ed.props.iter().any(|(pk, _)| pk == k)
+            .filter(|p| {
+                let k = p.key.as_str();
+                let common = ed.kind == RuleKind::Window && COMMON_KEYS.contains(&k);
+                let selector = ed.kind == RuleKind::Workspace && k == "workspace";
+                !p.removed && !common && !selector && !ed.props.iter().any(|(pk, _)| pk == k)
             })
-            .map(str::to_string)
+            .map(|p| p.key.clone())
             .collect();
         options.sort();
         section(
@@ -838,9 +844,72 @@ impl App {
     }
 }
 
+/// How a known property's value is edited.
+#[derive(Debug, PartialEq, Eq)]
+enum ValueWidget {
+    Check,
+    Pick,
+    Chips,
+    Text,
+}
+
+/// A property with choices shows them whenever the value is empty or already one of them;
+/// only a hand-written value outside the list falls back to a text input.
+fn value_widget(info: &PropEntry, v: &str) -> ValueWidget {
+    if info.choices.is_empty() {
+        return if info.kind == Kind::Bool && (v == "true" || v == "false") {
+            ValueWidget::Check
+        } else {
+            ValueWidget::Text
+        };
+    }
+    let known = |t: &str| info.choices.iter().any(|c| c == t);
+    match (
+        info.multi,
+        v.split_whitespace().all(known),
+        v.is_empty() || known(v),
+    ) {
+        (true, true, _) => ValueWidget::Chips,
+        (false, _, true) => ValueWidget::Pick,
+        _ => ValueWidget::Text,
+    }
+}
+
+/// The value a freshly added property starts with.
+pub(super) fn prop_default(info: &PropEntry) -> String {
+    if let Some(first) = info.choices.first() {
+        return first.clone();
+    }
+    match info.kind {
+        Kind::Bool => "true",
+        Kind::Int => "0",
+        Kind::Float => "0.5",
+        Kind::Pair => "{ \"50%\", \"50%\" }",
+        Kind::Str => "",
+    }
+    .into()
+}
+
+/// `current` (space-separated) with `choice` switched on or off, in choice order.
+fn toggle_choice(choices: &[String], current: &str, choice: &str, on: bool) -> String {
+    choices
+        .iter()
+        .filter(|c| {
+            if c.as_str() == choice {
+                on
+            } else {
+                current.split_whitespace().any(|t| t == c.as_str())
+            }
+        })
+        .map(String::as_str)
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
 /// One "Other properties" row: the key as the label, a typed widget with help for known
 /// keys, an editable key with a warning for unknown ones.
 fn prop_row<'a>(
+    catalog: &'a PropCatalog,
     kind: RuleKind,
     i: usize,
     k: &'a str,
@@ -848,7 +917,7 @@ fn prop_row<'a>(
     narrow: bool,
 ) -> Element<'a, Message> {
     let remove = square_btn("×", Message::PropRemove(i));
-    let Some(info) = model::prop_info(kind, k) else {
+    let Some(info) = catalog.info(kind, k) else {
         let key = input("property", k)
             .on_input(move |s| Message::PropKey(i, s))
             .width(if narrow { Fill } else { Length::Fixed(LABEL_W) });
@@ -889,27 +958,43 @@ fn prop_row<'a>(
             .into()
     };
     let mut warn = false;
-    let value: Element<'a, Message> = match info.kind {
-        Kind::Bool if v == "true" || v == "false" => checkbox(v == "true")
+    let value: Element<'a, Message> = match value_widget(info, v) {
+        ValueWidget::Check => checkbox(v == "true")
             .on_toggle(move |b| Message::PropValue(i, b.to_string()))
             .into(),
-        _ if !info.choices.is_empty() => match info.choices.iter().find(|c| **c == v) {
-            Some(current) => pick(info.choices, Some(*current), move |c: &str| {
-                Message::PropValue(i, c.to_string())
-            })
-            .width(Fill)
-            .into(),
-            None => edit(),
-        },
-        Kind::Int => {
-            warn = v.trim().parse::<i64>().is_err();
+        ValueWidget::Pick => pick(
+            info.choices.clone(),
+            Some(v.to_string()).filter(|v| !v.is_empty()),
+            move |c: String| Message::PropValue(i, c),
+        )
+        .placeholder("Choose…")
+        .width(Fill)
+        .into(),
+        ValueWidget::Chips => {
+            let mut chips = Row::new().spacing(GAP).width(Fill);
+            for choice in &info.choices {
+                let on = v.split_whitespace().any(|t| t == choice);
+                let (choices, current, name) =
+                    (info.choices.clone(), v.to_string(), choice.clone());
+                chips = chips.push(
+                    checkbox(on)
+                        .label(choice.as_str())
+                        .text_size(TEXT)
+                        .on_toggle(move |on| {
+                            Message::PropValue(i, toggle_choice(&choices, &current, &name, on))
+                        }),
+                );
+            }
+            chips.wrap().vertical_spacing(GAP).into()
+        }
+        ValueWidget::Text => {
+            match info.kind {
+                Kind::Int => warn = v.trim().parse::<i64>().is_err(),
+                Kind::Float => warn = v.trim().parse::<f64>().is_err(),
+                _ => {}
+            }
             edit()
         }
-        Kind::Float => {
-            warn = v.trim().parse::<f64>().is_err();
-            edit()
-        }
-        _ => edit(),
     };
     let label = tooltip(
         container(single_line(k, TEXT).font(MONO))
@@ -917,7 +1002,7 @@ fn prop_row<'a>(
             .height(CONTROL_H)
             .align_y(iced::Center)
             .clip(true),
-        container(text(info.help).size(TEXT_SMALL))
+        container(text(info.help.as_str()).size(TEXT_SMALL))
             .padding(style::U)
             .style(container::rounded_box),
         tooltip::Position::Top,
@@ -931,7 +1016,10 @@ fn prop_row<'a>(
     if warn {
         control = control.push(text("not a number").size(TEXT_SMALL).style(text::danger));
     }
-    control = control.push(help(info.help));
+    control = control.push(help(info.help.as_str()));
+    if info.removed {
+        control = control.push(help(catalog.removed_note()));
+    }
     if narrow {
         column![label, control].spacing(style::U).into()
     } else {
@@ -942,6 +1030,61 @@ fn prop_row<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn entry(kind: Kind, choices: &[&str], multi: bool) -> PropEntry {
+        PropEntry {
+            key: "k".into(),
+            kind,
+            help: String::new(),
+            choices: choices.iter().map(|c| c.to_string()).collect(),
+            multi,
+            removed: false,
+        }
+    }
+
+    #[test]
+    fn choices_show_a_pick_list_unless_the_value_is_foreign() {
+        let idle = entry(Kind::Str, &["none", "always"], false);
+        assert_eq!(value_widget(&idle, ""), ValueWidget::Pick);
+        assert_eq!(value_widget(&idle, "always"), ValueWidget::Pick);
+        assert_eq!(value_widget(&idle, "sometimes"), ValueWidget::Text);
+        let multi = entry(Kind::Str, &["a", "b", "c"], true);
+        assert_eq!(value_widget(&multi, ""), ValueWidget::Chips);
+        assert_eq!(value_widget(&multi, "c a"), ValueWidget::Chips);
+        assert_eq!(value_widget(&multi, "a z"), ValueWidget::Text);
+        assert_eq!(
+            value_widget(&entry(Kind::Bool, &[], false), "true"),
+            ValueWidget::Check
+        );
+        assert_eq!(
+            value_widget(&entry(Kind::Bool, &[], false), ""),
+            ValueWidget::Text
+        );
+        assert_eq!(
+            value_widget(&entry(Kind::Int, &[], false), "3"),
+            ValueWidget::Text
+        );
+    }
+
+    #[test]
+    fn new_properties_start_with_a_sensible_value() {
+        assert_eq!(
+            prop_default(&entry(Kind::Str, &["none", "always"], false)),
+            "none"
+        );
+        assert_eq!(prop_default(&entry(Kind::Str, &["x", "y"], true)), "x");
+        assert_eq!(prop_default(&entry(Kind::Bool, &[], false)), "true");
+        assert_eq!(prop_default(&entry(Kind::Str, &[], false)), "");
+    }
+
+    #[test]
+    fn chips_join_in_choice_order() {
+        let c: Vec<String> = ["a", "b", "c"].iter().map(|s| s.to_string()).collect();
+        assert_eq!(toggle_choice(&c, "", "c", true), "c");
+        assert_eq!(toggle_choice(&c, "c", "a", true), "a c");
+        assert_eq!(toggle_choice(&c, "a b c", "b", false), "a c");
+        assert_eq!(toggle_choice(&c, "a", "a", false), "");
+    }
 
     #[test]
     fn editing_keeps_effects_the_widgets_cant_show() {

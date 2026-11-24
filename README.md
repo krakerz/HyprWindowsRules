@@ -25,6 +25,7 @@ Hyprland 0.55+ moved to a Lua config; window rules are `hl.window_rule({ match =
 - Updates itself from GitHub releases: a notice at start-up, then one click to download, install and restart.
 - Group rules; groups collapse and switch on or off together.
 - Workspace rules and layer rules next to window rules, with typed property editors and descriptions.
+- Properties with fixed values (e.g. `idle_inhibit`, `suppress_event`) offer them in a drop-down or as toggles; values and descriptions are fetched from the Hyprland wiki for your installed version and cached.
 - Window inspector: see which rules hit a window and the final result, with checks for overridden, overlapping and never-matching rules.
 - "Apply now" applies a rule to open windows; pick a window by focusing it.
 - Undo/redo, a history of saved versions with a diff and restore, and checks before saving.
