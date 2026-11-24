@@ -38,6 +38,32 @@ pub fn clients() -> Result<Vec<Json>, String> {
         .collect())
 }
 
+/// The focused window, from `hyprctl activewindow -j`.
+pub fn active_window() -> Result<Json, String> {
+    let c: Json = serde_json::from_str(&hyprctl(&["activewindow", "-j"])?)
+        .map_err(|e| format!("unexpected hyprctl output: {e}"))?;
+    if address(&c).is_empty() {
+        return Err("No window has focus.".into());
+    }
+    Ok(c)
+}
+
+/// Run one `hyprctl dispatch` expression.
+pub fn dispatch(expr: &str) -> Result<(), String> {
+    let out = hyprctl(&["dispatch", expr])?;
+    let out = out.trim();
+    // Lua expressions work but make hyprctl answer "expected a dispatcher" (NOTES 2026-10-06)
+    if out.is_empty() || out == "ok" || out.contains("expected a dispatcher") {
+        Ok(())
+    } else {
+        Err(out.into())
+    }
+}
+
+pub fn address(c: &Json) -> &str {
+    str_field(c, "address")
+}
+
 pub fn monitors() -> Result<Vec<Json>, String> {
     json(&["monitors", "-j"])
 }

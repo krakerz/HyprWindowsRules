@@ -43,12 +43,19 @@ fn installed_binary() -> PathBuf {
 }
 
 pub fn install_kind() -> InstallKind {
-    if let Some(appimage) = std::env::var_os("APPIMAGE") {
-        return InstallKind::AppImage(PathBuf::from(appimage));
-    }
     let exe = std::env::current_exe()
         .ok()
         .and_then(|p| p.canonicalize().ok());
+    // $APPIMAGE is inherited by everything an AppImage starts (an AppImage editor's
+    // terminal, say); only trust it when this binary runs from inside the mounted image,
+    // or the update would overwrite that other program's AppImage
+    if let (Some(appimage), Some(appdir)) =
+        (std::env::var_os("APPIMAGE"), std::env::var_os("APPDIR"))
+        && let (Some(exe), Ok(appdir)) = (&exe, Path::new(&appdir).canonicalize())
+        && exe.starts_with(appdir)
+    {
+        return InstallKind::AppImage(PathBuf::from(appimage));
+    }
     if exe.is_some() && exe == installed_binary().canonicalize().ok() {
         return InstallKind::Archive;
     }

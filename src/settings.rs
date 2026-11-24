@@ -154,6 +154,15 @@ pub fn expand(p: &str) -> PathBuf {
     }
 }
 
+/// `path` for display, with the home directory shown as `~`.
+pub fn display_path(path: &Path) -> String {
+    match path.strip_prefix(home()) {
+        Ok(rel) if rel.as_os_str().is_empty() => "~".into(),
+        Ok(rel) => format!("~/{}", rel.display()),
+        Err(_) => path.display().to_string(),
+    }
+}
+
 /// Lua expression for `path`. `home_var` is the Lua expression for $HOME; paths under it are
 /// written relative to it so configs stay portable.
 fn lua_path(path: &Path, home_var: &str) -> String {
@@ -239,7 +248,18 @@ pub fn install_hook(hook: &Path, rules: &Path) -> io::Result<()> {
             }
         }
     }
-    let text = fs::read_to_string(hook).unwrap_or_default();
+    // Never create the config: a hyprland.lua holding only the hook would replace the user's
+    // whole Hyprland config
+    let text = fs::read_to_string(hook).map_err(|e| {
+        if e.kind() == io::ErrorKind::NotFound {
+            io::Error::new(
+                e.kind(),
+                "the file doesn't exist — point “Load it from” at the Lua config Hyprland loads",
+            )
+        } else {
+            e
+        }
+    })?;
     let mut lines: Vec<String> = strip_hook_lines(&text)
         .into_iter()
         .map(String::from)
@@ -251,15 +271,37 @@ pub fn install_hook(hook: &Path, rules: &Path) -> io::Result<()> {
     lines.extend(["".into(), HOOK_COMMENT.into()]);
     lines.extend(hook_lines);
     lines.push("".into());
-    if let Some(dir) = hook.parent() {
-        fs::create_dir_all(dir)?;
-    }
     fs::write(hook, lines.join("\n"))
+}
+
+/// Why the hook's `require` couldn't load `rules`, if it couldn't.
+pub fn rules_path_problem(rules: &Path) -> Option<&'static str> {
+    if rules.extension().is_none_or(|e| e != "lua") {
+        return Some("The rules file must end in .lua.");
+    }
+    // package.path separates entries with ; and marks the name with ?; require reads . as /
+    if rules.to_string_lossy().contains([';', '?'])
+        || rules
+            .file_stem()
+            .is_some_and(|s| s.to_string_lossy().contains('.'))
+    {
+        return Some(
+            "Lua's require can't load that file: the path can't contain ; or ?, nor the name a dot before .lua.",
+        );
+    }
+    None
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn display_path_uses_tilde() {
+        assert_eq!(display_path(&home().join("x/y")), "~/x/y");
+        assert_eq!(display_path(&home()), "~");
+        assert_eq!(display_path(Path::new("/etc/x")), "/etc/x");
+    }
 
     #[test]
     fn caelestia_style_hook() {
@@ -275,5 +317,13 @@ mod tests {
             ]
         );
         assert_eq!(hook_lines_for("", &rules).len(), 1);
+    }
+
+    #[test]
+    fn rules_paths_require_can_load() {
+        assert!(rules_path_problem(Path::new("/x/hypr-rules.lua")).is_none());
+        assert!(rules_path_problem(Path::new("/x/rules")).is_some());
+        assert!(rules_path_problem(Path::new("/x/my.rules.lua")).is_some());
+        assert!(rules_path_problem(Path::new("/x;y/rules.lua")).is_some());
     }
 }
