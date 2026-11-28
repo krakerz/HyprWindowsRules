@@ -15,7 +15,7 @@ jobs:
     if: github.event.action != 'closed'
     runs-on: ubuntu-latest   # same as the release workflow's Linux job (cache key)
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       # no system -dev packages: Wayland/X11/GPU libs load at runtime, Lua is vendored
       - uses: dtolnay/rust-toolchain@stable
         with: { components: "rustfmt, clippy" }

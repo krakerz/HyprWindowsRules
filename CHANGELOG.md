@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+## [0.7.1] — 2026-11-28
+
+### Fixed
+- The AppImage has a proper icon and app metadata for software centres.
+- "Route is active" in Audio routes is a switch like "Active" in the rule editor.
+
 ## [0.7.0] — 2026-11-24
 
 ### Added
