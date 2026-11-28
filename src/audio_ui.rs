@@ -3,8 +3,8 @@
 use std::time::Duration;
 
 use iced::widget::{
-    Column, button, center, checkbox, column, container, pick_list, row, scrollable, space, text,
-    text_input,
+    Column, button, center, column, container, pick_list, row, scrollable, space, text, text_input,
+    toggler,
 };
 use iced::{Element, Fill, Task};
 
@@ -486,7 +486,7 @@ impl AudioTab {
                     ),
                     row![
                         space().width(LABEL_W),
-                        checkbox(route.enabled)
+                        toggler(route.enabled)
                             .label("Route is active")
                             .text_size(TEXT)
                             .on_toggle(Msg::Enabled)

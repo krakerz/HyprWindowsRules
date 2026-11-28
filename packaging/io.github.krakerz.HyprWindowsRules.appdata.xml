@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>io.github.krakerz.HyprWindowsRules</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>MIT</project_license>
+  <name>Hyprland Windows Rules</name>
+  <summary>Manage Hyprland window rules without editing config files</summary>
+  <description>
+    <p>
+      A graphical editor for Hyprland's Lua window, workspace and layer rules: pick a window,
+      choose what should happen to it, and save. No hand-written regex or config editing.
+    </p>
+  </description>
+  <launchable type="desktop-id">io.github.krakerz.HyprWindowsRules.desktop</launchable>
+  <url type="homepage">https://github.com/krakerz/HyprWindowsRules</url>
+  <url type="bugtracker">https://github.com/krakerz/HyprWindowsRules/issues</url>
+  <developer id="io.github.krakerz">
+    <name>krakerz</name>
+  </developer>
+  <categories>
+    <category>Settings</category>
+    <category>DesktopSettings</category>
+  </categories>
+  <content_rating type="oars-1.1"/>
+  <provides>
+    <binary>hypr-rules</binary>
+  </provides>
+</component>

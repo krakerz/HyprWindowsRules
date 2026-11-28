@@ -21,7 +21,7 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
@@ -69,9 +69,17 @@ jobs:
         run: |
           set -euo pipefail
           appdir=AppDir
-          mkdir -p "$appdir/usr/bin"
+          mkdir -p "$appdir/usr/bin" "$appdir/usr/share/metainfo" "$appdir/usr/share/applications"
           cp target/release/hypr-rules "$appdir/usr/bin/"
-          cp packaging/hypr-rules.desktop packaging/hypr-rules.svg "$appdir/"
+          # appimagetool wants a PNG named after the .desktop Icon= key, plus .DirIcon
+          cp packaging/hypr-rules.png "$appdir/"
+          cp packaging/hypr-rules.png "$appdir/.DirIcon"
+          # AppStream validation needs desktop file, metainfo file and component id to share
+          # one reverse-DNS name (appimagetool fails the build on validator warnings)
+          id=io.github.krakerz.HyprWindowsRules
+          cp packaging/hypr-rules.desktop "$appdir/$id.desktop"
+          cp packaging/hypr-rules.desktop "$appdir/usr/share/applications/$id.desktop"
+          cp "packaging/$id.appdata.xml" "$appdir/usr/share/metainfo/"
           ln -s usr/bin/hypr-rules "$appdir/AppRun"
           curl -fsSL -o appimagetool \
             https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage
@@ -100,7 +108,7 @@ jobs:
           } >> release-notes.md
 
       - name: Draft release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           draft: true
           tag_name: v${{ steps.version.outputs.version }}
