@@ -1,0 +1,29 @@
+name: PR check
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, closed]
+    paths-ignore: [README.md, CHANGELOG.md, LICENSE, packaging/INSTALL.txt, .gitignore]
+concurrency:
+  group: pr-check-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+permissions:
+  contents: read
+env:
+  CARGO_TERM_COLOR: always
+jobs:
+  check:
+    if: github.event.action != 'closed'
+    runs-on: ubuntu-latest   # same as the release workflow's Linux job (cache key)
+    steps:
+      - uses: actions/checkout@v4
+      # no system -dev packages: Wayland/X11/GPU libs load at runtime, Lua is vendored
+      - uses: dtolnay/rust-toolchain@stable
+        with: { components: "rustfmt, clippy" }
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: pr-check
+          save-if: false
+      - run: cargo fmt -- --check
+      - run: cargo clippy --release --locked --all-targets -- -D warnings
+      - run: cargo build --release --locked
+      - run: cargo test --release --locked
